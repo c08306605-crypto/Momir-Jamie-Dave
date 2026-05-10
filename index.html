@@ -519,12 +519,7 @@
         const pt        = power !== undefined ? `${power}/${toughness}` : '';
 
         /* ── Screen display ── */
-        document.getElementById('cardImage').src          = imageUri;
-        document.getElementById('cardName').textContent   = name;
-        document.getElementById('cardMana').innerHTML     = renderManaHTML(manaCost, 16);
-        document.getElementById('cardType').textContent   = typeLine;
-        document.getElementById('cardOracle').innerHTML   = renderOracleHTML(oracle, 14);
-        document.getElementById('cardPT').textContent     = pt ? `${power} / ${toughness}` : '';
+        document.getElementById('cardImage').src = imageUri;
 
         /* ── Print layout ── */
         document.getElementById('printName').textContent  = name;
