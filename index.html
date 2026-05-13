@@ -380,7 +380,7 @@
 
     <div class="actions">
       <button class="action-btn btn-another" id="btnAnother">Another</button>
-      <button class="action-btn btn-print"   id="btnPrint">Print</button>
+      <button class="action-btn btn-print"   id="btnPrint">Share</button>
       <button class="action-btn btn-back"    id="btnBack">Back</button>
     </div>
 
@@ -414,6 +414,41 @@
   <script>
     /* ── State ── */
     let currentCMC = 0;
+    let currentCardImageUrl = '';
+    let currentCardName = '';
+
+    /* ── Share card image to Phomemo / other apps, or download ── */
+    async function shareOrDownloadCard() {
+      if (!currentCardImageUrl) return;
+
+      try {
+        /* Fetch the card image as a blob */
+        const res = await fetch(currentCardImageUrl);
+        const blob = await res.blob();
+        const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
+
+        /* Use Web Share API if available (Android Chrome) */
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: currentCardName,
+            files: [file],
+          });
+        } else {
+          /* Fallback: download the image */
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = currentCardName + '.png';
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        /* User cancelled share sheet — that's fine, ignore */
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err);
+        }
+      }
+    }
 
     /* ── Screens ── */
     const screens = {
@@ -476,7 +511,7 @@
 
     /* ── Action buttons ── */
     document.getElementById('btnAnother').addEventListener('click', () => fetchCreature(currentCMC));
-    document.getElementById('btnPrint').addEventListener('click',   () => window.print());
+    document.getElementById('btnPrint').addEventListener('click',   shareOrDownloadCard);
     document.getElementById('btnBack').addEventListener('click',    () => show('grid'));
     document.getElementById('btnErrorBack').addEventListener('click', () => show('grid'));
 
@@ -518,6 +553,16 @@
         const power     = face.power       ?? card.power;
         const toughness = face.toughness   ?? card.toughness;
         const pt        = power !== undefined ? `${power}/${toughness}` : '';
+
+        /* High-res PNG for sharing to Phomemo app */
+        const pngUri = card.image_uris
+          ? card.image_uris.png
+          : (card.card_faces && card.card_faces[0].image_uris
+              ? card.card_faces[0].image_uris.png
+              : imageUri);
+
+        currentCardImageUrl = pngUri;
+        currentCardName = name;
 
         /* ── Screen display ── */
         document.getElementById('cardImage').src = imageUri;
