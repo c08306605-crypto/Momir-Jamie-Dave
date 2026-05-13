@@ -27,16 +27,129 @@
       padding: 1.25rem 1rem 0.5rem;
     }
 
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
     header h1 {
       font-size: 1.6rem;
       letter-spacing: 0.08em;
       color: #ff8906;
     }
 
+    .help-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid #a7a9be;
+      background: transparent;
+      color: #a7a9be;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .help-btn:active { opacity: 0.6; }
+
     header p {
       font-size: 0.8rem;
       color: #a7a9be;
       margin-top: 0.25rem;
+    }
+
+    /* ── Help Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: #1a1a2e;
+      border: 2px solid #252541;
+      border-radius: 16px;
+      padding: 1.5rem;
+      max-width: 380px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      color: #fffffe;
+    }
+
+    .modal h2 {
+      font-size: 1.1rem;
+      color: #ff8906;
+      margin-bottom: 1rem;
+    }
+
+    .modal .step {
+      margin-bottom: 1rem;
+    }
+
+    .modal .step-num {
+      display: inline-block;
+      background: #ff8906;
+      color: #0f0e17;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 24px;
+      font-weight: 700;
+      font-size: 0.8rem;
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+
+    .modal .step-title {
+      font-weight: 700;
+      font-size: 0.95rem;
+      vertical-align: middle;
+    }
+
+    .modal .step-body {
+      font-size: 0.82rem;
+      color: #a7a9be;
+      margin-top: 0.3rem;
+      line-height: 1.5;
+    }
+
+    .modal .close-btn {
+      display: block;
+      width: 100%;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 10px;
+      background: #ff8906;
+      color: #0f0e17;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 0.5rem;
+    }
+
+    .modal .footer-note {
+      font-size: 0.75rem;
+      color: #666;
+      text-align: center;
+      margin-top: 1rem;
+      line-height: 1.4;
     }
 
     /* ── Screens ── */
@@ -272,10 +385,55 @@
 <body>
 
   <header>
-    <h1>MOMIR</h1>
+    <div class="title-row">
+      <h1>MOMIR</h1>
+      <button class="help-btn" id="helpBtn">?</button>
+    </div>
     <p>Tap a mana value to summon a creature</p>
     <p style="margin-top:0.3rem;">Brought to you by Dave and Jamie, best friends forever</p>
   </header>
+
+  <!-- ── Help Modal ── -->
+  <div class="modal-overlay" id="helpModal">
+    <div class="modal">
+      <h2>How to Use</h2>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Buy a Bluetooth thermal printer</span>
+        <div class="step-body">
+          We used the Phomemo M02 — it's cheap and does the job. Make sure you buy <strong>sticky thermal paper</strong> that is <strong>black on white</strong>. The paper that comes with the M02 is transparent and not black which has mixed results.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Pair printer and set up the app</span>
+        <div class="step-body">
+          Pair the printer to your phone via Bluetooth. Download the printer's app (e.g. Phomemo app) and go through the setup process.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Generate and share</span>
+        <div class="step-body">
+          Tap a mana value to generate a random creature. Hit <strong>Share</strong> — this renders a thermal-printer-friendly version of the card and opens your phone's share sheet. Select the printer app, which will handle the print from there.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body" style="text-align:center; color:#ff8906; font-weight:700; font-size:0.9rem;">
+          Janky and simple. Have fun!
+        </div>
+      </div>
+
+      <button class="close-btn" id="helpClose">Got it</button>
+      <div class="footer-note">
+        Designed for mobile use. Only tested on Android using Chrome.
+      </div>
+    </div>
+  </div>
 
   <!-- ── Screen: CMC Grid ── -->
   <div class="screen active" id="screenGrid">
@@ -457,6 +615,19 @@
         document.getElementById('printCard').classList.remove('rendering');
       }
     }
+
+    /* ── Help modal ── */
+    document.getElementById('helpBtn').addEventListener('click', () => {
+      document.getElementById('helpModal').classList.add('active');
+    });
+    document.getElementById('helpClose').addEventListener('click', () => {
+      document.getElementById('helpModal').classList.remove('active');
+    });
+    document.getElementById('helpModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) {
+        e.currentTarget.classList.remove('active');
+      }
+    });
 
     /* ── Build CMC buttons (0-15) ── */
     const grid = document.getElementById('cmcGrid');
