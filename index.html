@@ -164,7 +164,6 @@
       z-index: -1;
     }
 
-    /* ── Name bar ── */
     .print-title-bar {
       display: flex;
       justify-content: space-between;
@@ -198,7 +197,6 @@
       height: 18px;
     }
 
-    /* ── Art box ── */
     .print-art-box {
       width: 100%;
       height: 240px;
@@ -216,7 +214,6 @@
       display: block;
     }
 
-    /* ── Type bar ── */
     .print-type-bar {
       display: flex;
       justify-content: space-between;
@@ -236,7 +233,6 @@
       white-space: nowrap;
     }
 
-    /* ── Text box ── */
     .print-text-box {
       background: #f4efe6;
       border: 1px solid #999;
@@ -258,7 +254,6 @@
       vertical-align: middle;
     }
 
-    /* ── P/T box ── */
     .print-pt-box {
       position: absolute;
       bottom: 10px;
@@ -337,6 +332,70 @@
     let currentCMC = 0;
     let currentCardName = '';
 
+    /* ── Mana symbol cache (SVG → data URL) ── */
+    const manaCache = {};
+
+    async function fetchManaDataUrl(code) {
+      if (manaCache[code]) return manaCache[code];
+      try {
+        const url = `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
+        const res = await fetch(url);
+        const svgText = await res.text();
+        const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgText)));
+        manaCache[code] = dataUrl;
+        return dataUrl;
+      } catch {
+        return '';
+      }
+    }
+
+    /* Extract all {X} symbols from a string */
+    function extractSymbols(str) {
+      const syms = [];
+      if (!str) return syms;
+      const re = /\{([^}]+)\}/g;
+      let m;
+      while ((m = re.exec(str)) !== null) {
+        syms.push(m[1].replace('/', ''));
+      }
+      return [...new Set(syms)];
+    }
+
+    /* Pre-fetch all mana symbols for a card */
+    async function prefetchMana(manaCost, oracleText) {
+      const allSyms = [...extractSymbols(manaCost), ...extractSymbols(oracleText)];
+      await Promise.all(allSyms.map(s => fetchManaDataUrl(s)));
+    }
+
+    /* Render mana string to HTML using cached data URLs */
+    function renderManaHTML(manaString, symSize) {
+      if (!manaString) return '';
+      const size = symSize || 16;
+      return manaString.replace(/\{([^}]+)\}/g, (match, sym) => {
+        const code = sym.replace('/', '');
+        const src = manaCache[code] || '';
+        if (!src) return match;
+        return `<img class="mana-sym" src="${src}" alt="${match}" width="${size}" height="${size}">`;
+      });
+    }
+
+    /* Render oracle text to HTML with mana symbols */
+    function renderOracleHTML(oracleText, symSize) {
+      if (!oracleText) return '';
+      const size = symSize || 14;
+      const escaped = oracleText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      const withSymbols = escaped.replace(/\{([^}]+)\}/g, (match, sym) => {
+        const code = sym.replace('/', '');
+        const src = manaCache[code] || '';
+        if (!src) return match;
+        return `<img class="mana-sym" src="${src}" alt="${match}" width="${size}" height="${size}">`;
+      });
+      return withSymbols.replace(/\n/g, '<br>');
+    }
+
     /* ── Screens ── */
     const screens = {
       grid:    document.getElementById('screenGrid'),
@@ -351,34 +410,6 @@
       window.scrollTo(0, 0);
     }
 
-    /* ────────────────────────────────────────
-       Mana symbol renderer
-       ──────────────────────────────────────── */
-    function renderManaHTML(manaString, symSize) {
-      if (!manaString) return '';
-      const size = symSize || 16;
-      return manaString.replace(/\{([^}]+)\}/g, (match, sym) => {
-        const code = sym.replace('/', '');
-        const url = `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
-        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}" crossorigin="anonymous">`;
-      });
-    }
-
-    function renderOracleHTML(oracleText, symSize) {
-      if (!oracleText) return '';
-      const size = symSize || 14;
-      const escaped = oracleText
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      const withSymbols = escaped.replace(/\{([^}]+)\}/g, (match, sym) => {
-        const code = sym.replace('/', '');
-        const url = `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
-        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}" crossorigin="anonymous">`;
-      });
-      return withSymbols.replace(/\n/g, '<br>');
-    }
-
     /* ── Render card to image and share ── */
     async function shareCard() {
       const btn = document.getElementById('btnPrint');
@@ -387,26 +418,22 @@
 
       try {
         const printCard = document.getElementById('printCard');
-
-        /* Move card on-screen so html2canvas can render it */
         printCard.classList.add('rendering');
 
-        /* Small delay to let images settle */
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 500));
 
         const canvas = await html2canvas(printCard, {
           useCORS: true,
+          allowTaint: false,
           scale: 2,
           backgroundColor: '#ffffff',
         });
 
         printCard.classList.remove('rendering');
 
-        /* Convert to blob */
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
 
-        /* Share or download */
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             title: currentCardName,
@@ -486,6 +513,9 @@
         const pt        = power !== undefined ? `${power}/${toughness}` : '';
 
         currentCardName = name;
+
+        /* Pre-fetch all mana symbols as data URLs so html2canvas can render them */
+        await prefetchMana(manaCost, oracle);
 
         /* ── Screen display ── */
         document.getElementById('cardImage').src = imageUri;
