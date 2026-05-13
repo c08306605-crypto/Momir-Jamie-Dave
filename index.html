@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Momir</title>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     /* ── Reset & Base ── */
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -106,57 +107,6 @@
       display: block;
     }
 
-    .card-info {
-      width: 100%;
-      text-align: center;
-      margin-bottom: 0.5rem;
-    }
-
-    .card-name {
-      font-size: 1.2rem;
-      font-weight: 700;
-    }
-
-    .card-mana {
-      margin-top: 0.15rem;
-    }
-
-    .card-mana .mana-sym {
-      width: 16px;
-      height: 16px;
-      vertical-align: middle;
-    }
-
-    .card-type {
-      font-size: 0.85rem;
-      color: #a7a9be;
-      margin-top: 0.25rem;
-    }
-
-    .card-oracle {
-      font-size: 0.82rem;
-      color: #d1d1e0;
-      margin-top: 0.5rem;
-      line-height: 1.45;
-      max-height: 10rem;
-      overflow-y: auto;
-      text-align: center;
-      width: 100%;
-    }
-
-    .card-oracle .mana-sym {
-      width: 14px;
-      height: 14px;
-      vertical-align: middle;
-    }
-
-    .card-pt {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: #ff8906;
-      margin-top: 0.4rem;
-    }
-
     /* ── Action Buttons ── */
     .actions {
       display: flex;
@@ -181,6 +131,7 @@
     .btn-another { background: #252541; color: #fffffe; }
     .btn-print   { background: #ff8906; color: #0f0e17; }
     .btn-back    { background: #1a1a2e; color: #a7a9be; border: 2px solid #252541; }
+    .btn-print.sharing { opacity: 0.5; pointer-events: none; }
 
     /* ── Error ── */
     .error-msg {
@@ -191,165 +142,135 @@
     }
 
     /* ──────────────────────────────────────────
-       Print-only card (looks like a Magic card)
+       Shareable card (rendered to image)
        ────────────────────────────────────────── */
-    .print-card { display: none; }
+    .print-card {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      width: 450px;
+      height: 630px;
+      border: 3px solid #000;
+      border-radius: 16px;
+      font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+      color: #000;
+      background: #fff;
+      overflow: hidden;
+      padding: 8px;
+    }
 
-    @media print {
-      @page {
-        size: 63mm 88mm;
-        margin: 0;
-      }
+    .print-card.rendering {
+      left: 0;
+      z-index: -1;
+    }
 
-      body {
-        background: #fff !important;
-        color: #000 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-      }
+    /* ── Name bar ── */
+    .print-title-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #e0d6c2;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-bottom: 5px;
+    }
 
-      header,
-      #screenGrid,
-      #screenLoading,
-      #screenError,
-      .card-image-wrap,
-      .actions,
-      .card-info,
-      .card-oracle,
-      .card-pt {
-        display: none !important;
-      }
+    .print-name {
+      font-size: 16px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      margin-right: 6px;
+    }
 
-      #screenCard {
-        display: block !important;
-        padding: 0 !important;
-        max-width: none !important;
-        width: 63mm;
-      }
+    .print-mana {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
 
-      .print-card {
-        display: block !important;
-        width: 63mm;
-        height: 88mm;
-        border: 2pt solid #000;
-        border-radius: 3mm;
-        font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
-        color: #000;
-        background: #fff;
-        overflow: hidden;
-        position: relative;
-        padding: 1.5mm;
-      }
+    .print-mana .mana-sym {
+      width: 18px;
+      height: 18px;
+    }
 
-      /* ── Name bar ── */
-      .print-title-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #e0d6c2;
-        border: 0.5pt solid #999;
-        border-radius: 1.5mm;
-        padding: 1mm 2mm;
-        margin-bottom: 1mm;
-      }
+    /* ── Art box ── */
+    .print-art-box {
+      width: 100%;
+      height: 240px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 5px;
+      background: #ddd;
+    }
 
-      .print-name {
-        font-size: 8pt;
-        font-weight: 700;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        flex: 1;
-        margin-right: 1mm;
-      }
+    .print-art-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
 
-      .print-mana {
-        display: flex;
-        align-items: center;
-        gap: 0.5mm;
-        flex-shrink: 0;
-      }
+    /* ── Type bar ── */
+    .print-type-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #e0d6c2;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 5px 10px;
+      margin-bottom: 5px;
+    }
 
-      .print-mana .mana-sym {
-        width: 10px;
-        height: 10px;
-      }
+    .print-type {
+      font-size: 13px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
-      /* ── Art box ── */
-      .print-art-box {
-        width: 100%;
-        height: 32mm;
-        border: 0.5pt solid #999;
-        border-radius: 1mm;
-        overflow: hidden;
-        margin-bottom: 1mm;
-        background: #ddd;
-      }
+    /* ── Text box ── */
+    .print-text-box {
+      background: #f4efe6;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 8px 10px;
+      min-height: 180px;
+      max-height: 260px;
+      overflow: hidden;
+    }
 
-      .print-art-box img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
-      }
+    .print-text {
+      font-size: 13px;
+      line-height: 1.4;
+    }
 
-      /* ── Type bar ── */
-      .print-type-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #e0d6c2;
-        border: 0.5pt solid #999;
-        border-radius: 1.5mm;
-        padding: 1mm 2mm;
-        margin-bottom: 1mm;
-      }
+    .print-text .mana-sym {
+      width: 14px;
+      height: 14px;
+      vertical-align: middle;
+    }
 
-      .print-type {
-        font-size: 7pt;
-        font-weight: 600;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      /* ── Text box ── */
-      .print-text-box {
-        background: #f4efe6;
-        border: 0.5pt solid #999;
-        border-radius: 1.5mm;
-        padding: 1.5mm 2mm;
-        min-height: 24mm;
-        max-height: 32mm;
-        overflow: hidden;
-        position: relative;
-      }
-
-      .print-text {
-        font-size: 6.5pt;
-        line-height: 1.4;
-      }
-
-      .print-text .mana-sym {
-        width: 9px;
-        height: 9px;
-        vertical-align: middle;
-      }
-
-      /* ── P/T box ── */
-      .print-pt-box {
-        position: absolute;
-        bottom: 2mm;
-        right: 2.5mm;
-        background: #e0d6c2;
-        border: 0.5pt solid #999;
-        border-radius: 1.5mm;
-        padding: 0.5mm 2.5mm;
-        font-size: 9pt;
-        font-weight: 700;
-        text-align: center;
-        min-width: 10mm;
-      }
+    /* ── P/T box ── */
+    .print-pt-box {
+      position: absolute;
+      bottom: 10px;
+      right: 12px;
+      background: #e0d6c2;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 3px 12px;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      min-width: 50px;
     }
   </style>
 </head>
@@ -375,31 +296,13 @@
   <!-- ── Screen: Card ── -->
   <div class="screen" id="screenCard">
     <div class="card-image-wrap">
-      <img id="cardImage" alt="Card art" src="">
+      <img id="cardImage" alt="Card art" src="" crossorigin="anonymous">
     </div>
 
     <div class="actions">
       <button class="action-btn btn-another" id="btnAnother">Another</button>
       <button class="action-btn btn-print"   id="btnPrint">Share</button>
       <button class="action-btn btn-back"    id="btnBack">Back</button>
-    </div>
-
-    <!-- Print-only: full card layout -->
-    <div class="print-card" id="printCard">
-      <div class="print-title-bar">
-        <span class="print-name" id="printName"></span>
-        <span class="print-mana" id="printMana"></span>
-      </div>
-      <div class="print-art-box">
-        <img id="printArt" alt="" src="">
-      </div>
-      <div class="print-type-bar">
-        <span class="print-type" id="printType"></span>
-      </div>
-      <div class="print-text-box">
-        <div class="print-text" id="printText"></div>
-      </div>
-      <div class="print-pt-box" id="printPTBox"></div>
     </div>
   </div>
 
@@ -411,44 +314,28 @@
     </div>
   </div>
 
+  <!-- Offscreen card for rendering to image -->
+  <div class="print-card" id="printCard">
+    <div class="print-title-bar">
+      <span class="print-name" id="printName"></span>
+      <span class="print-mana" id="printMana"></span>
+    </div>
+    <div class="print-art-box">
+      <img id="printArt" alt="" src="" crossorigin="anonymous">
+    </div>
+    <div class="print-type-bar">
+      <span class="print-type" id="printType"></span>
+    </div>
+    <div class="print-text-box">
+      <div class="print-text" id="printText"></div>
+    </div>
+    <div class="print-pt-box" id="printPTBox"></div>
+  </div>
+
   <script>
     /* ── State ── */
     let currentCMC = 0;
-    let currentCardImageUrl = '';
     let currentCardName = '';
-
-    /* ── Share card image to Phomemo / other apps, or download ── */
-    async function shareOrDownloadCard() {
-      if (!currentCardImageUrl) return;
-
-      try {
-        /* Fetch the card image as a blob */
-        const res = await fetch(currentCardImageUrl);
-        const blob = await res.blob();
-        const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
-
-        /* Use Web Share API if available (Android Chrome) */
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title: currentCardName,
-            files: [file],
-          });
-        } else {
-          /* Fallback: download the image */
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = currentCardName + '.png';
-          a.click();
-          URL.revokeObjectURL(url);
-        }
-      } catch (err) {
-        /* User cancelled share sheet — that's fine, ignore */
-        if (err.name !== 'AbortError') {
-          console.error('Share failed:', err);
-        }
-      }
-    }
 
     /* ── Screens ── */
     const screens = {
@@ -466,37 +353,82 @@
 
     /* ────────────────────────────────────────
        Mana symbol renderer
-       Parses {W}, {U}, {B}, {R}, {G}, {1}, {X}, {T}, etc.
-       and returns HTML with Scryfall SVG icons.
        ──────────────────────────────────────── */
     function renderManaHTML(manaString, symSize) {
       if (!manaString) return '';
       const size = symSize || 16;
       return manaString.replace(/\{([^}]+)\}/g, (match, sym) => {
-        /* Scryfall uses uppercase, slashes become hyphens: {W/U} → WU */
         const code = sym.replace('/', '');
         const url = `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
-        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}">`;
+        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}" crossorigin="anonymous">`;
       });
     }
 
-    /* Renders oracle text: replaces mana symbols inline, preserves line breaks */
     function renderOracleHTML(oracleText, symSize) {
       if (!oracleText) return '';
       const size = symSize || 14;
-      /* Escape HTML entities first */
       const escaped = oracleText
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-      /* Replace mana/tap symbols */
       const withSymbols = escaped.replace(/\{([^}]+)\}/g, (match, sym) => {
         const code = sym.replace('/', '');
         const url = `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
-        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}">`;
+        return `<img class="mana-sym" src="${url}" alt="${match}" width="${size}" height="${size}" crossorigin="anonymous">`;
       });
-      /* Preserve line breaks */
       return withSymbols.replace(/\n/g, '<br>');
+    }
+
+    /* ── Render card to image and share ── */
+    async function shareCard() {
+      const btn = document.getElementById('btnPrint');
+      btn.classList.add('sharing');
+      btn.textContent = 'Wait...';
+
+      try {
+        const printCard = document.getElementById('printCard');
+
+        /* Move card on-screen so html2canvas can render it */
+        printCard.classList.add('rendering');
+
+        /* Small delay to let images settle */
+        await new Promise(r => setTimeout(r, 300));
+
+        const canvas = await html2canvas(printCard, {
+          useCORS: true,
+          scale: 2,
+          backgroundColor: '#ffffff',
+        });
+
+        printCard.classList.remove('rendering');
+
+        /* Convert to blob */
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
+
+        /* Share or download */
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: currentCardName,
+            files: [file],
+          });
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = currentCardName + '.png';
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err);
+        }
+      } finally {
+        btn.classList.remove('sharing');
+        btn.textContent = 'Share';
+        document.getElementById('printCard').classList.remove('rendering');
+      }
     }
 
     /* ── Build CMC buttons (0-15) ── */
@@ -511,7 +443,7 @@
 
     /* ── Action buttons ── */
     document.getElementById('btnAnother').addEventListener('click', () => fetchCreature(currentCMC));
-    document.getElementById('btnPrint').addEventListener('click',   shareOrDownloadCard);
+    document.getElementById('btnPrint').addEventListener('click',   shareCard);
     document.getElementById('btnBack').addEventListener('click',    () => show('grid'));
     document.getElementById('btnErrorBack').addEventListener('click', () => show('grid'));
 
@@ -539,7 +471,6 @@
               ? card.card_faces[0].image_uris.normal
               : '');
 
-        /* Scryfall provides a crop of just the art */
         const artCrop = card.image_uris
           ? card.image_uris.art_crop
           : (card.card_faces && card.card_faces[0].image_uris
@@ -554,24 +485,16 @@
         const toughness = face.toughness   ?? card.toughness;
         const pt        = power !== undefined ? `${power}/${toughness}` : '';
 
-        /* High-res PNG for sharing to Phomemo app */
-        const pngUri = card.image_uris
-          ? card.image_uris.png
-          : (card.card_faces && card.card_faces[0].image_uris
-              ? card.card_faces[0].image_uris.png
-              : imageUri);
-
-        currentCardImageUrl = pngUri;
         currentCardName = name;
 
         /* ── Screen display ── */
         document.getElementById('cardImage').src = imageUri;
 
-        /* ── Print layout ── */
+        /* ── Print/share layout ── */
         document.getElementById('printName').textContent  = name;
-        document.getElementById('printMana').innerHTML    = renderManaHTML(manaCost, 10);
+        document.getElementById('printMana').innerHTML    = renderManaHTML(manaCost, 18);
         document.getElementById('printType').textContent  = typeLine;
-        document.getElementById('printText').innerHTML    = renderOracleHTML(oracle, 9);
+        document.getElementById('printText').innerHTML    = renderOracleHTML(oracle, 14);
         document.getElementById('printArt').src           = artCrop;
 
         const ptBox = document.getElementById('printPTBox');
