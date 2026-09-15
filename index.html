@@ -706,6 +706,76 @@
       RETRY_DELAY_MS: 300,
     };
 
+    /* ── The "cat printer" family ──
+       MX05/MX06/MX10, GB01/GB02/GB03, GT01, YT01 — the little square units
+       with a cat-face button. Same 384-dot head as the M02, but they speak a
+       framed packet protocol with a CRC8 per packet instead of ESC/POS, on
+       their own service and characteristics. Protocol per the cat-printer and
+       catprinter projects. */
+    const CAT = {
+      SERVICE_UUID:     0xae30,
+      WRITE_CHAR_UUID:  0xae01,
+      NOTIFY_CHAR_UUID: 0xae02,
+      WIDTH_BYTES: 48,      /* 384 dots, same as the M02 */
+      ROW_DELAY_MS: 20,     /* these overrun and jam if fed flat out */
+      ENERGY: 0x3000,       /* burn energy, 0x0000-0xffff; higher = darker */
+      FEED_DOTS: 80,
+    };
+
+    /* CRC-8, polynomial 0x07, over the packet payload only. Built at runtime
+       rather than transcribed, so there is no table to get wrong. */
+    const CRC8_TABLE = (() => {
+      const table = new Uint8Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let bit = 0; bit < 8; bit++) {
+          c = (c & 0x80) ? ((c << 1) ^ 0x07) & 0xff : (c << 1) & 0xff;
+        }
+        table[i] = c;
+      }
+      return table;
+    })();
+
+    function crc8(bytes) {
+      let crc = 0;
+      for (let i = 0; i < bytes.length; i++) crc = CRC8_TABLE[(crc ^ bytes[i]) & 0xff];
+      return crc & 0xff;
+    }
+
+    /* 0x51 0x78 <cmd> 0x00 <len lo> <len hi> <payload> <crc8> 0xff */
+    function catPacket(command, payload) {
+      const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+      const packet = new Uint8Array(body.length + 8);
+      packet[0] = 0x51;
+      packet[1] = 0x78;
+      packet[2] = command;
+      packet[3] = 0x00;
+      packet[4] = body.length & 0xff;
+      packet[5] = (body.length >> 8) & 0xff;
+      packet.set(body, 6);
+      packet[6 + body.length] = crc8(body);
+      packet[7 + body.length] = 0xff;
+      return packet;
+    }
+
+    const CAT_CMD = {
+      GET_STATE:     () => catPacket(0xa3, [0x00]),
+      SET_QUALITY:   () => catPacket(0xa4, [0x32]),          /* 200 dpi */
+      DRAWING_MODE:  mode => catPacket(0xbe, [mode]),        /* 0 image, 1 text */
+      SET_ENERGY:    e => catPacket(0xaf, [e & 0xff, (e >> 8) & 0xff]),
+      UPDATE_DEVICE: () => catPacket(0xa9, [0x00]),
+      FEED:          d => catPacket(0xa1, [d & 0xff, (d >> 8) & 0xff]),
+      PRINT_ROW:     row => catPacket(0xa2, row),
+      /* Fixed magic sequences that bracket a job. LATTICE_START matches the
+         published capture byte for byte, checksum included. Captures of
+         LATTICE_END show 0x00 where its CRC should be; the checksum is
+         computed here like every other packet, on the grounds that a correct
+         one can only help. It only closes the job, so a printer that rejects
+         it has already printed the card. */
+      LATTICE_START: () => catPacket(0xa6, [0xaa, 0x55, 0x17, 0x38, 0x44, 0x5f, 0x5f, 0x5f, 0x44, 0x38, 0x2c]),
+      LATTICE_END:   () => catPacket(0xa6, [0xaa, 0x55, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17]),
+    };
+
     /* Heat time per density step: higher = darker burn */
     const HEAT_TIMES = [40, 60, 80, 100, 120, 140, 160, 200];
 
@@ -725,13 +795,15 @@
       FEED: dots => [0x1b, 0x4a, dots & 0xff],
     };
 
-    class PhomemoPrinter {
+    class ThermalPrinter {
       constructor() {
         this.device = null;
         this.writeChar = null;
         this.notifyChar = null;
         this.connected = false;
         this.onStateChange = null;
+        /* 'phomemo' (ESC/POS) or 'cat' (CRC8 packets), decided at connect time */
+        this.protocol = null;
         /* Set after an empty/cancelled picker so the next try lists everything */
         this.showAllDevices = false;
         /* Some units expose write-with-response only */
@@ -778,7 +850,7 @@
       }
 
       async connect() {
-        if (!PhomemoPrinter.isSupported()) {
+        if (!ThermalPrinter.isSupported()) {
           throw new Error('This browser has no Web Bluetooth. Use Chrome on Android.');
         }
         if (this.isConnected()) return;
@@ -836,27 +908,26 @@
             (lastError ? ' (' + lastError.message + ')' : ''));
         }
 
+        /* Which characteristic answers tells us which protocol to speak. */
         try {
           this.writeChar = await service.getCharacteristic(PHOMEMO.WRITE_CHAR_UUID);
+          this.protocol = 'phomemo';
         } catch (err) {
-          /* The MX/GB/GT/YT "cat printers" answer on service 0xae30 but expose
-             0xae01/0xae02 and speak a CRC8 packet protocol, not ESC/POS — so
-             they connect fine and then silently print nothing. Say so instead. */
-          let catPrinter = false;
           try {
-            await service.getCharacteristic(0xae01);
-            catPrinter = true;
-          } catch (e) { /* not a cat printer either */ }
-          throw new Error(catPrinter
-            ? 'That looks like a GB01/MX-series "cat printer". It uses a different protocol to the Phomemo and isn\'t supported yet.'
-            : 'Connected, but this device has no Phomemo print channel (characteristic 0xff02).');
+            this.writeChar = await service.getCharacteristic(CAT.WRITE_CHAR_UUID);
+            this.protocol = 'cat';
+          } catch (err2) {
+            throw new Error('Connected, but this device exposes no print channel '
+              + '(looked for 0xff02 and 0xae01).');
+          }
         }
         const props = this.writeChar.properties;
         this._useWriteWithResponse = !props.writeWithoutResponse && props.write;
 
         /* Notifications carry status replies; printing works without them */
         try {
-          this.notifyChar = await service.getCharacteristic(PHOMEMO.NOTIFY_CHAR_UUID);
+          this.notifyChar = await service.getCharacteristic(
+            this.protocol === 'cat' ? CAT.NOTIFY_CHAR_UUID : PHOMEMO.NOTIFY_CHAR_UUID);
           await this.notifyChar.startNotifications();
         } catch (err) {
           this.notifyChar = null;
@@ -909,6 +980,35 @@
       }
 
       async printRaster(data, widthBytes, lines, onProgress) {
+        return this.protocol === 'cat'
+          ? this.printRasterCat(data, widthBytes, lines, onProgress)
+          : this.printRasterPhomemo(data, widthBytes, lines, onProgress);
+      }
+
+      /* One packet per scan line, paced so the printer's buffer keeps up. */
+      async printRasterCat(data, widthBytes, lines, onProgress) {
+        await this.send(CAT_CMD.GET_STATE());
+        await this.send(CAT_CMD.SET_QUALITY());
+        await this.send(CAT_CMD.LATTICE_START());
+        await this.send(CAT_CMD.SET_ENERGY(CAT.ENERGY));
+        await this.send(CAT_CMD.DRAWING_MODE(0));
+        await this.send(CAT_CMD.UPDATE_DEVICE());
+        await this.delay(50);
+
+        for (let y = 0; y < lines; y++) {
+          await this.send(CAT_CMD.PRINT_ROW(data.subarray(y * widthBytes, (y + 1) * widthBytes)));
+          await this.delay(CAT.ROW_DELAY_MS);
+          if (onProgress) onProgress(Math.round((y + 1) / lines * 100));
+        }
+
+        await this.send(CAT_CMD.FEED(CAT.FEED_DOTS));
+        await this.delay(100);
+        await this.send(CAT_CMD.LATTICE_END());
+        await this.send(CAT_CMD.GET_STATE());
+        await this.delay(500);
+      }
+
+      async printRasterPhomemo(data, widthBytes, lines, onProgress) {
         await this.send(ESC.M02_PREFIX);
         await this.delay(50);
         await this.send(ESC.INIT);
@@ -923,7 +1023,7 @@
       }
     }
 
-    const printer = new PhomemoPrinter();
+    const printer = new ThermalPrinter();
 
     /* ── Canvas → 1-bit raster ── */
 
@@ -963,8 +1063,10 @@
       return out;
     }
 
-    /* Scale a rendered card to the print head width and pack it into raster bytes */
-    function canvasToRaster(source, widthBytes) {
+    /* Scale a rendered card to the print head width and pack it into raster
+       bytes. ESC/POS puts the leftmost pixel in the high bit; the cat printers
+       take each byte the other way round, so bitOrder picks between them. */
+    function canvasToRaster(source, widthBytes, bitOrder) {
       const width = widthBytes * 8;
       const lines = Math.max(1, Math.round(source.height * (width / source.width)));
 
@@ -987,7 +1089,9 @@
         for (let byteX = 0; byteX < widthBytes; byteX++) {
           let byte = 0;
           for (let bit = 0; bit < 8; bit++) {
-            if (bits[y * width + byteX * 8 + bit] === 1) byte |= 1 << (7 - bit);
+            if (bits[y * width + byteX * 8 + bit] === 1) {
+              byte |= bitOrder === 'lsb' ? (1 << bit) : (1 << (7 - bit));
+            }
           }
           data[y * widthBytes + byteX] = byte;
         }
@@ -1044,7 +1148,9 @@
       const connected = printer.isConnected();
 
       bar.classList.toggle('connected', connected);
-      label.textContent = connected ? printer.deviceName : 'Printer not connected';
+      label.textContent = connected
+        ? printer.deviceName + (printer.protocol === 'cat' ? ' · cat' : ' · ESC/POS')
+        : 'Printer not connected';
       action.textContent = connected ? 'Disconnect' : 'Connect';
 
       if (connected) document.getElementById('printerShowAll').hidden = true;
@@ -1086,7 +1192,7 @@
     async function printCard() {
       const btn = document.getElementById('btnPrint');
 
-      if (!PhomemoPrinter.isSupported()) {
+      if (!ThermalPrinter.isSupported()) {
         setPrintStatus('This browser has no Web Bluetooth — use Chrome on Android, or tap Share.', 'error');
         return;
       }
@@ -1101,7 +1207,11 @@
 
         setPrintStatus('Rendering card\u2026');
         const canvas = await renderPrintCanvas(true);
-        const raster = canvasToRaster(canvas, PHOMEMO.WIDTH_BYTES);
+        const isCat = printer.protocol === 'cat';
+        const raster = canvasToRaster(
+          canvas,
+          isCat ? CAT.WIDTH_BYTES : PHOMEMO.WIDTH_BYTES,
+          isCat ? 'lsb' : 'msb');
 
         setPrintStatus('Printing\u2026 0%');
         await printer.printRaster(raster.data, raster.widthBytes, raster.lines, percent => {
@@ -1185,7 +1295,7 @@
     document.getElementById('btnErrorBack').addEventListener('click', () => show('grid'));
 
     /* ── Printer bar ── */
-    if (PhomemoPrinter.isSupported()) {
+    if (ThermalPrinter.isSupported()) {
       document.getElementById('printerBar').classList.add('visible');
       document.getElementById('printerAction').addEventListener('click', () => {
         if (printer.isConnected()) {
