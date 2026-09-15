@@ -242,9 +242,75 @@
     .action-btn:active { transform: scale(0.95); opacity: 0.85; }
 
     .btn-another { background: #252541; color: #fffffe; }
+    .btn-share   { background: #252541; color: #fffffe; }
     .btn-print   { background: #ff8906; color: #0f0e17; }
     .btn-back    { background: #1a1a2e; color: #a7a9be; border: 2px solid #252541; }
-    .btn-print.sharing { opacity: 0.5; pointer-events: none; }
+    .action-btn:disabled { opacity: 0.5; pointer-events: none; }
+
+    .actions.stacked { flex-direction: column; gap: 0.5rem; }
+    .actions.stacked .actions { margin-top: 0; }
+
+    /* ── Printer status bar ── */
+    .printer-bar {
+      display: none;
+      align-items: center;
+      gap: 0.5rem;
+      width: calc(100% - 1.5rem);
+      max-width: 405px;
+      margin: 0 auto;
+      padding: 0.5rem 0.75rem;
+      background: #1a1a2e;
+      border: 2px solid #252541;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      color: #a7a9be;
+    }
+
+    .printer-bar.visible { display: flex; }
+
+    .printer-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #5a5a70;
+      flex-shrink: 0;
+    }
+
+    .printer-bar.connected .printer-dot { background: #2cb67d; }
+
+    .printer-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .printer-action {
+      border: none;
+      border-radius: 7px;
+      background: #252541;
+      color: #fffffe;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.35rem 0.7rem;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .printer-action:disabled { opacity: 0.5; pointer-events: none; }
+
+    /* ── Print progress ── */
+    .print-status {
+      width: 100%;
+      min-height: 1.2rem;
+      margin-top: 0.6rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #a7a9be;
+    }
+
+    .print-status.error { color: #e53170; }
+    .print-status.done  { color: #2cb67d; }
 
     /* ── Error ── */
     .error-msg {
@@ -367,6 +433,18 @@
       vertical-align: middle;
     }
 
+    /* Thermal printers are 1-bit: the beige fills dither into speckle, so the
+       direct-print path flattens every panel to white with black rules. */
+    .print-card.mono .print-title-bar,
+    .print-card.mono .print-type-bar,
+    .print-card.mono .print-text-box,
+    .print-card.mono .print-pt-box {
+      background: #fff;
+      border-color: #000;
+    }
+
+    .print-card.mono .print-art-box { border-color: #000; }
+
     .print-pt-box {
       position: absolute;
       bottom: 10px;
@@ -393,6 +471,13 @@
     <p style="margin-top:0.3rem;">Brought to you by Dave and Jamie, best friends forever</p>
   </header>
 
+  <!-- ── Printer connection bar (only shown when Web Bluetooth is available) ── -->
+  <div class="printer-bar" id="printerBar">
+    <span class="printer-dot"></span>
+    <span class="printer-label" id="printerLabel">Printer not connected</span>
+    <button class="printer-action" id="printerAction">Connect</button>
+  </div>
+
   <!-- ── Help Modal ── -->
   <div class="modal-overlay" id="helpModal">
     <div class="modal">
@@ -408,17 +493,17 @@
 
       <div class="step">
         <span class="step-num">2</span>
-        <span class="step-title">Pair printer and set up the app</span>
+        <span class="step-title">Connect the printer</span>
         <div class="step-body">
-          Pair the printer to your phone via Bluetooth. Download the printer's app (e.g. Phomemo app) and go through the setup process.
+          Switch the printer on, then tap <strong>Connect</strong> at the top of this page and pick it from the Bluetooth list. This talks to the printer directly — no Phomemo app needed. It only works in <strong>Chrome on Android</strong> (or desktop Chrome/Edge); other browsers don't support Web Bluetooth.
         </div>
       </div>
 
       <div class="step">
         <span class="step-num">3</span>
-        <span class="step-title">Generate and share</span>
+        <span class="step-title">Generate and print</span>
         <div class="step-body">
-          Tap a mana value to generate a random creature. Hit <strong>Share</strong> — this renders a thermal-printer-friendly version of the card and opens your phone's share sheet. Select the printer app, which will handle the print from there.
+          Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
         </div>
       </div>
 
@@ -452,11 +537,16 @@
       <img id="cardImage" alt="Card art" src="" crossorigin="anonymous">
     </div>
 
-    <div class="actions">
-      <button class="action-btn btn-another" id="btnAnother">Another</button>
-      <button class="action-btn btn-print"   id="btnPrint">Share</button>
-      <button class="action-btn btn-back"    id="btnBack">Back</button>
+    <div class="actions stacked">
+      <button class="action-btn btn-print" id="btnPrint">Print</button>
+      <div class="actions">
+        <button class="action-btn btn-another" id="btnAnother">Another</button>
+        <button class="action-btn btn-share"   id="btnShare">Share</button>
+        <button class="action-btn btn-back"    id="btnBack">Back</button>
+      </div>
     </div>
+
+    <div class="print-status" id="printStatus"></div>
   </div>
 
   <!-- ── Screen: Error ── -->
@@ -572,6 +662,316 @@
       return withSymbols.replace(/\n/g, '<br>');
     }
 
+    /* ────────────────────────────────────────
+       Phomemo thermal printing over Web Bluetooth
+       Transport and M02 ESC/POS protocol adapted from
+       https://github.com/transcriptionstream/phomymo
+       ──────────────────────────────────────── */
+
+    const PHOMEMO = {
+      /* 0xff00 is the standard Phomemo GATT service; the rest cover re-badged
+         units that expose the same write/notify characteristics. */
+      SERVICE_UUIDS: [
+        0xff00,
+        0xffe0,
+        0xae30,
+        '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+      ],
+      WRITE_CHAR_UUID:  0xff02,
+      NOTIFY_CHAR_UUID: 0xff03,
+      /* Name prefixes keep the picker free of unrelated Bluetooth devices.
+         M02/M03/M04 -> "M0", M110/M120 -> "M1", M200 series -> "M2". */
+      NAME_PREFIXES: ['M0', 'M1', 'M2', 'T02', 'Phomemo', 'Mr.in'],
+      WIDTH_BYTES: 48,      /* M02 prints 384 dots (48 bytes) per line at 203 dpi */
+      CHUNK_SIZE: 128,
+      CHUNK_DELAY_MS: 20,
+      DENSITY: 6,           /* 1-8, higher is darker */
+      FEED_DOTS: 80,        /* pushes the card clear of the head so it can be torn off */
+      MAX_RETRIES: 2,
+      RETRY_DELAY_MS: 300,
+    };
+
+    /* Heat time per density step: higher = darker burn */
+    const HEAT_TIMES = [40, 60, 80, 100, 120, 140, 160, 200];
+
+    const ESC = {
+      /* The M02 wants this prefix before it will accept ESC/POS commands */
+      M02_PREFIX: [0x10, 0xff, 0xfe, 0x01],
+      INIT: [0x1b, 0x40],
+      /* ESC 7 n1 n2 n3 — max heating dots, heat time, heat interval */
+      HEAT: heatTime => [0x1b, 0x37, 7, heatTime, 2],
+      /* GS v 0 — raster bit image */
+      RASTER: (widthBytes, lines) => [
+        0x1d, 0x76, 0x30, 0x00,
+        widthBytes, 0x00,
+        lines & 0xff, (lines >> 8) & 0xff,
+      ],
+      /* ESC J n — feed n dots */
+      FEED: dots => [0x1b, 0x4a, dots & 0xff],
+    };
+
+    class PhomemoPrinter {
+      constructor() {
+        this.device = null;
+        this.writeChar = null;
+        this.notifyChar = null;
+        this.connected = false;
+        this.onStateChange = null;
+        /* Set after an empty/cancelled picker so the next try lists everything */
+        this.showAllDevices = false;
+        /* Some units expose write-with-response only */
+        this._useWriteWithResponse = false;
+      }
+
+      static isSupported() {
+        return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
+      }
+
+      isConnected() {
+        return this.connected && !!this.device && !!this.device.gatt
+            && this.device.gatt.connected && !!this.writeChar;
+      }
+
+      get deviceName() {
+        return (this.device && this.device.name) || 'Printer';
+      }
+
+      delay(ms) {
+        return new Promise(r => setTimeout(r, ms));
+      }
+
+      _notify() {
+        if (this.onStateChange) this.onStateChange();
+      }
+
+      /* Show the Bluetooth picker. Must be called from a user gesture.
+         The name filter keeps unrelated devices out of the list, but a printer
+         advertising under an unexpected name would never show up — so a
+         cancelled picker arms the unfiltered list for the next attempt. */
+      async requestDevice() {
+        if (this.showAllDevices) {
+          this.showAllDevices = false;
+          return await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: PHOMEMO.SERVICE_UUIDS,
+          });
+        }
+        try {
+          return await navigator.bluetooth.requestDevice({
+            filters: PHOMEMO.NAME_PREFIXES.map(namePrefix => ({ namePrefix })),
+            optionalServices: PHOMEMO.SERVICE_UUIDS,
+          });
+        } catch (err) {
+          if (err.name === 'NotFoundError') this.showAllDevices = true;
+          throw err;
+        }
+      }
+
+      async connect() {
+        if (!PhomemoPrinter.isSupported()) {
+          throw new Error('This browser has no Web Bluetooth. Use Chrome on Android.');
+        }
+        if (this.isConnected()) return;
+
+        if (!this.device) this.device = await this.requestDevice();
+
+        let lastError;
+        for (let attempt = 0; attempt <= PHOMEMO.MAX_RETRIES; attempt++) {
+          try {
+            await this.connectGATT();
+            return;
+          } catch (err) {
+            lastError = err;
+            if (attempt < PHOMEMO.MAX_RETRIES) {
+              await this.delay(PHOMEMO.RETRY_DELAY_MS * Math.pow(2, attempt));
+            }
+          }
+        }
+        /* A device handle that never connects is usually a stale pairing entry */
+        this.device = null;
+        throw lastError;
+      }
+
+      async connectGATT() {
+        if (!this.device._momirDisconnectHandler) {
+          this.device.addEventListener('gattserverdisconnected', () => {
+            this.connected = false;
+            this.writeChar = null;
+            this.notifyChar = null;
+            this._notify();
+          });
+          this.device._momirDisconnectHandler = true;
+        }
+
+        this.connected = false;
+        this.writeChar = null;
+        this.notifyChar = null;
+
+        const server = await this.device.gatt.connect();
+        /* Service discovery straight after connecting is flaky on some units */
+        await this.delay(100);
+
+        let service = null;
+        let lastError = null;
+        for (const uuid of PHOMEMO.SERVICE_UUIDS) {
+          try {
+            service = await server.getPrimaryService(uuid);
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (!service) {
+          throw new Error('No compatible printer service found' +
+            (lastError ? ' (' + lastError.message + ')' : ''));
+        }
+
+        this.writeChar = await service.getCharacteristic(PHOMEMO.WRITE_CHAR_UUID);
+        const props = this.writeChar.properties;
+        this._useWriteWithResponse = !props.writeWithoutResponse && props.write;
+
+        /* Notifications carry status replies; printing works without them */
+        try {
+          this.notifyChar = await service.getCharacteristic(PHOMEMO.NOTIFY_CHAR_UUID);
+          await this.notifyChar.startNotifications();
+        } catch (err) {
+          this.notifyChar = null;
+        }
+
+        this.connected = true;
+        this._notify();
+      }
+
+      disconnect() {
+        try {
+          if (this.device && this.device.gatt && this.device.gatt.connected) {
+            this.device.gatt.disconnect();
+          }
+        } catch (err) {
+          /* already gone */
+        }
+        this.device = null;
+        this.writeChar = null;
+        this.notifyChar = null;
+        this.connected = false;
+        this._notify();
+      }
+
+      async send(bytes) {
+        if (!this.isConnected()) throw new Error('Printer is not connected');
+        const buffer = new Uint8Array(bytes).buffer;
+        if (this._useWriteWithResponse) {
+          await this.writeChar.writeValue(buffer);
+          return;
+        }
+        try {
+          await this.writeChar.writeValueWithoutResponse(buffer);
+        } catch (err) {
+          this._useWriteWithResponse = true;
+          await this.writeChar.writeValue(buffer);
+        }
+      }
+
+      /* BLE writes are capped at the MTU, so raster data goes out in slices */
+      async sendChunked(bytes, onProgress) {
+        for (let i = 0; i < bytes.length; i += PHOMEMO.CHUNK_SIZE) {
+          const chunk = bytes.slice(i, Math.min(i + PHOMEMO.CHUNK_SIZE, bytes.length));
+          await this.send(chunk);
+          await this.delay(PHOMEMO.CHUNK_DELAY_MS);
+          if (onProgress) {
+            onProgress(Math.round((i + chunk.length) / bytes.length * 100));
+          }
+        }
+      }
+
+      async printRaster(data, widthBytes, lines, onProgress) {
+        await this.send(ESC.M02_PREFIX);
+        await this.delay(50);
+        await this.send(ESC.INIT);
+        await this.delay(100);
+        await this.send(ESC.HEAT(HEAT_TIMES[PHOMEMO.DENSITY - 1]));
+        await this.delay(30);
+        await this.send(ESC.RASTER(widthBytes, lines));
+        await this.sendChunked(data, onProgress);
+        await this.delay(300);
+        await this.send(ESC.FEED(PHOMEMO.FEED_DOTS));
+        await this.delay(500);
+      }
+    }
+
+    const printer = new PhomemoPrinter();
+
+    /* ── Canvas → 1-bit raster ── */
+
+    /* Perceptual grey with gamma lift, so midtones survive the 1-bit squash */
+    function toGrayscale(pixels, width, height, gamma) {
+      const gray = new Float32Array(width * height);
+      const gammaInv = 1 / (gamma || 1.3);
+      for (let i = 0; i < gray.length; i++) {
+        const idx = i * 4;
+        const a = pixels[idx + 3];
+        let value = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        if (a < 255) value = value * (a / 255) + 255 * (1 - a / 255);
+        gray[i] = 255 * Math.pow(value / 255, gammaInv);
+      }
+      return gray;
+    }
+
+    /* Floyd-Steinberg error diffusion: 1 = burn the dot, 0 = leave it white */
+    function floydSteinberg(gray, width, height) {
+      const pixels = new Float32Array(gray);
+      const out = new Uint8Array(width * height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          const oldPixel = pixels[idx];
+          const newPixel = oldPixel < 128 ? 0 : 255;
+          out[idx] = newPixel === 0 ? 1 : 0;
+          const error = oldPixel - newPixel;
+          if (x + 1 < width) pixels[idx + 1] += error * 7 / 16;
+          if (y + 1 < height) {
+            if (x > 0) pixels[(y + 1) * width + (x - 1)] += error * 3 / 16;
+            pixels[(y + 1) * width + x] += error * 5 / 16;
+            if (x + 1 < width) pixels[(y + 1) * width + (x + 1)] += error * 1 / 16;
+          }
+        }
+      }
+      return out;
+    }
+
+    /* Scale a rendered card to the print head width and pack it into raster bytes */
+    function canvasToRaster(source, widthBytes) {
+      const width = widthBytes * 8;
+      const lines = Math.max(1, Math.round(source.height * (width / source.width)));
+
+      const scaled = document.createElement('canvas');
+      scaled.width = width;
+      scaled.height = lines;
+
+      const ctx = scaled.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, lines);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(source, 0, 0, width, lines);
+
+      const pixels = ctx.getImageData(0, 0, width, lines).data;
+      const bits = floydSteinberg(toGrayscale(pixels, width, lines, 1.3), width, lines);
+
+      const data = new Uint8Array(widthBytes * lines);
+      for (let y = 0; y < lines; y++) {
+        for (let byteX = 0; byteX < widthBytes; byteX++) {
+          let byte = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            if (bits[y * width + byteX * 8 + bit] === 1) byte |= 1 << (7 - bit);
+          }
+          data[y * widthBytes + byteX] = byte;
+        }
+      }
+      return { data: data, widthBytes: widthBytes, lines: lines };
+    }
+
     /* ── Screens ── */
     const screens = {
       grid:    document.getElementById('screenGrid'),
@@ -586,26 +986,119 @@
       window.scrollTo(0, 0);
     }
 
-    /* ── Render card to image and share ── */
-    async function shareCard() {
-      const btn = document.getElementById('btnPrint');
-      btn.classList.add('sharing');
-      btn.textContent = 'Wait...';
-
+    /* ── Render the off-screen card to a canvas ── */
+    async function renderPrintCanvas(mono) {
+      const printCard = document.getElementById('printCard');
+      printCard.classList.add('rendering');
+      if (mono) printCard.classList.add('mono');
       try {
-        const printCard = document.getElementById('printCard');
-        printCard.classList.add('rendering');
-
+        /* Give the art and mana images a moment to lay out before capture */
         await new Promise(r => setTimeout(r, 500));
-
-        const canvas = await html2canvas(printCard, {
+        return await html2canvas(printCard, {
           useCORS: true,
           allowTaint: false,
           scale: 2,
           backgroundColor: '#ffffff',
         });
+      } finally {
+        printCard.classList.remove('rendering', 'mono');
+      }
+    }
 
-        printCard.classList.remove('rendering');
+    /* ── Print status line ── */
+    function setPrintStatus(text, kind) {
+      const el = document.getElementById('printStatus');
+      el.textContent = text || '';
+      el.classList.remove('error', 'done');
+      if (kind) el.classList.add(kind);
+    }
+
+    /* ── Printer connection bar ── */
+    function updatePrinterBar() {
+      const bar    = document.getElementById('printerBar');
+      const label  = document.getElementById('printerLabel');
+      const action = document.getElementById('printerAction');
+      const connected = printer.isConnected();
+
+      bar.classList.toggle('connected', connected);
+      label.textContent = connected ? printer.deviceName : 'Printer not connected';
+      action.textContent = connected ? 'Disconnect' : 'Connect';
+
+      const btnPrint = document.getElementById('btnPrint');
+      btnPrint.textContent = connected ? 'Print' : 'Connect & Print';
+    }
+
+    async function connectPrinter() {
+      const action = document.getElementById('printerAction');
+      action.disabled = true;
+      action.textContent = 'Connecting\u2026';
+      try {
+        await printer.connect();
+      } catch (err) {
+        setPrintStatus(printerErrorMessage(err), 'error');
+      } finally {
+        action.disabled = false;
+        updatePrinterBar();
+      }
+    }
+
+    function printerErrorMessage(err) {
+      if (!err) return 'Printing failed.';
+      if (err.name === 'NotFoundError') {
+        return printer.showAllDevices
+          ? 'No printer picked. If it wasn\'t in the list, tap Connect again to show every Bluetooth device.'
+          : 'No printer selected.';
+      }
+      if (err.name === 'SecurityError')   return 'Bluetooth blocked — the page must be served over HTTPS.';
+      if (err.name === 'NetworkError')    return 'Lost the printer. Switch it off and on, then try again.';
+      return err.message || 'Printing failed.';
+    }
+
+    /* ── Print the current card straight to the Phomemo ── */
+    async function printCard() {
+      const btn = document.getElementById('btnPrint');
+
+      if (!PhomemoPrinter.isSupported()) {
+        setPrintStatus('This browser has no Web Bluetooth — use Chrome on Android, or tap Share.', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      try {
+        if (!printer.isConnected()) {
+          setPrintStatus('Connecting to printer\u2026');
+          await printer.connect();
+          updatePrinterBar();
+        }
+
+        setPrintStatus('Rendering card\u2026');
+        const canvas = await renderPrintCanvas(true);
+        const raster = canvasToRaster(canvas, PHOMEMO.WIDTH_BYTES);
+
+        setPrintStatus('Printing\u2026 0%');
+        await printer.printRaster(raster.data, raster.widthBytes, raster.lines, percent => {
+          setPrintStatus('Printing\u2026 ' + percent + '%');
+        });
+
+        setPrintStatus('Printed', 'done');
+        setTimeout(() => setPrintStatus(''), 2500);
+      } catch (err) {
+        console.error('Print failed:', err);
+        setPrintStatus(printerErrorMessage(err), 'error');
+      } finally {
+        btn.disabled = false;
+        updatePrinterBar();
+      }
+    }
+
+    /* ── Render card to image and hand it to the share sheet ── */
+    async function shareCard() {
+      const btn = document.getElementById('btnShare');
+      btn.disabled = true;
+      btn.textContent = 'Wait...';
+
+      try {
+        const canvas = await renderPrintCanvas(false);
 
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
@@ -628,9 +1121,8 @@
           console.error('Share failed:', err);
         }
       } finally {
-        btn.classList.remove('sharing');
+        btn.disabled = false;
         btn.textContent = 'Share';
-        document.getElementById('printCard').classList.remove('rendering');
       }
     }
 
@@ -659,9 +1151,28 @@
 
     /* ── Action buttons ── */
     document.getElementById('btnAnother').addEventListener('click', () => fetchCreature(currentCMC));
-    document.getElementById('btnPrint').addEventListener('click',   shareCard);
+    document.getElementById('btnPrint').addEventListener('click',   printCard);
+    document.getElementById('btnShare').addEventListener('click',   shareCard);
     document.getElementById('btnBack').addEventListener('click',    () => show('grid'));
     document.getElementById('btnErrorBack').addEventListener('click', () => show('grid'));
+
+    /* ── Printer bar ── */
+    if (PhomemoPrinter.isSupported()) {
+      document.getElementById('printerBar').classList.add('visible');
+      document.getElementById('printerAction').addEventListener('click', () => {
+        if (printer.isConnected()) {
+          printer.disconnect();
+        } else {
+          connectPrinter();
+        }
+      });
+      /* Reflect drop-outs (printer switched off, out of range) in the UI */
+      printer.onStateChange = updatePrinterBar;
+      updatePrinterBar();
+    } else {
+      /* No Web Bluetooth: Share is the only route to the printer */
+      document.getElementById('btnPrint').style.display = 'none';
+    }
 
     /* ── Fetch a random creature from Scryfall ── */
     async function fetchCreature(cmc) {
@@ -724,6 +1235,7 @@
           ptBox.style.display = 'none';
         }
 
+        setPrintStatus('');
         show('card');
 
       } catch (err) {
