@@ -299,6 +299,12 @@
 
     .printer-action:disabled { opacity: 0.5; pointer-events: none; }
 
+    .printer-action.secondary {
+      background: transparent;
+      border: 1px solid #3a3a55;
+      color: #a7a9be;
+    }
+
     /* ── Print progress ── */
     .print-status {
       width: 100%;
@@ -475,6 +481,7 @@
   <div class="printer-bar" id="printerBar">
     <span class="printer-dot"></span>
     <span class="printer-label" id="printerLabel">Printer not connected</span>
+    <button class="printer-action secondary" id="printerShowAll" hidden>Show all</button>
     <button class="printer-action" id="printerAction">Connect</button>
   </div>
 
@@ -681,8 +688,15 @@
       WRITE_CHAR_UUID:  0xff02,
       NOTIFY_CHAR_UUID: 0xff03,
       /* Name prefixes keep the picker free of unrelated Bluetooth devices.
-         M02/M03/M04 -> "M0", M110/M120 -> "M1", M200 series -> "M2". */
-      NAME_PREFIXES: ['M0', 'M1', 'M2', 'T02', 'Phomemo', 'Mr.in'],
+         Phomemo: M02/M03/M04 -> "M0", M110/M120 -> "M1", M200 series -> "M2",
+         plus the D/P/Q/A label makers. The MX/GB/GT/YT names are the cheap
+         clones that show up under the same "mini thermal printer" listings.
+         Anything missed here is still reachable via Show all. */
+      NAME_PREFIXES: [
+        'M0', 'M1', 'M2', 'MX', 'T02', 'Phomemo', 'Mr.in',
+        'D1', 'D3', 'D5', 'P12', 'A30', 'Q30',
+        'GB', 'GT', 'YT',
+      ],
       WIDTH_BYTES: 48,      /* M02 prints 384 dots (48 bytes) per line at 203 dpi */
       CHUNK_SIZE: 128,
       CHUNK_DELAY_MS: 20,
@@ -747,25 +761,20 @@
 
       /* Show the Bluetooth picker. Must be called from a user gesture.
          The name filter keeps unrelated devices out of the list, but a printer
-         advertising under an unexpected name would never show up — so a
-         cancelled picker arms the unfiltered list for the next attempt. */
+         advertising under a name the filter misses would never appear — an
+         empty picker is indistinguishable from a broken one. So showAllDevices
+         drops the filter entirely, and stays set until a device is actually
+         picked, rather than resetting on every cancelled picker. */
       async requestDevice() {
-        if (this.showAllDevices) {
-          this.showAllDevices = false;
-          return await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: PHOMEMO.SERVICE_UUIDS,
-          });
-        }
-        try {
-          return await navigator.bluetooth.requestDevice({
-            filters: PHOMEMO.NAME_PREFIXES.map(namePrefix => ({ namePrefix })),
-            optionalServices: PHOMEMO.SERVICE_UUIDS,
-          });
-        } catch (err) {
-          if (err.name === 'NotFoundError') this.showAllDevices = true;
-          throw err;
-        }
+        const options = this.showAllDevices
+          ? { acceptAllDevices: true, optionalServices: PHOMEMO.SERVICE_UUIDS }
+          : {
+              filters: PHOMEMO.NAME_PREFIXES.map(namePrefix => ({ namePrefix })),
+              optionalServices: PHOMEMO.SERVICE_UUIDS,
+            };
+        const device = await navigator.bluetooth.requestDevice(options);
+        this.showAllDevices = false;
+        return device;
       }
 
       async connect() {
@@ -827,7 +836,21 @@
             (lastError ? ' (' + lastError.message + ')' : ''));
         }
 
-        this.writeChar = await service.getCharacteristic(PHOMEMO.WRITE_CHAR_UUID);
+        try {
+          this.writeChar = await service.getCharacteristic(PHOMEMO.WRITE_CHAR_UUID);
+        } catch (err) {
+          /* The MX/GB/GT/YT "cat printers" answer on service 0xae30 but expose
+             0xae01/0xae02 and speak a CRC8 packet protocol, not ESC/POS — so
+             they connect fine and then silently print nothing. Say so instead. */
+          let catPrinter = false;
+          try {
+            await service.getCharacteristic(0xae01);
+            catPrinter = true;
+          } catch (e) { /* not a cat printer either */ }
+          throw new Error(catPrinter
+            ? 'That looks like a GB01/MX-series "cat printer". It uses a different protocol to the Phomemo and isn\'t supported yet.'
+            : 'Connected, but this device has no Phomemo print channel (characteristic 0xff02).');
+        }
         const props = this.writeChar.properties;
         this._useWriteWithResponse = !props.writeWithoutResponse && props.write;
 
@@ -1024,6 +1047,8 @@
       label.textContent = connected ? printer.deviceName : 'Printer not connected';
       action.textContent = connected ? 'Disconnect' : 'Connect';
 
+      if (connected) document.getElementById('printerShowAll').hidden = true;
+
       const btnPrint = document.getElementById('btnPrint');
       btnPrint.textContent = connected ? 'Print' : 'Connect & Print';
     }
@@ -1035,6 +1060,11 @@
       try {
         await printer.connect();
       } catch (err) {
+        /* An empty or cancelled picker is exactly when the unfiltered list is
+           worth offering, so reveal it rather than leaving them stuck. */
+        if (err.name === 'NotFoundError') {
+          document.getElementById('printerShowAll').hidden = false;
+        }
         setPrintStatus(printerErrorMessage(err), 'error');
       } finally {
         action.disabled = false;
@@ -1045,9 +1075,7 @@
     function printerErrorMessage(err) {
       if (!err) return 'Printing failed.';
       if (err.name === 'NotFoundError') {
-        return printer.showAllDevices
-          ? 'No printer picked. If it wasn\'t in the list, tap Connect again to show every Bluetooth device.'
-          : 'No printer selected.';
+        return 'No printer picked. If yours wasn\'t in the list, tap Show all.';
       }
       if (err.name === 'SecurityError')   return 'Bluetooth blocked — the page must be served over HTTPS.';
       if (err.name === 'NetworkError')    return 'Lost the printer. Switch it off and on, then try again.';
@@ -1165,6 +1193,10 @@
         } else {
           connectPrinter();
         }
+      });
+      document.getElementById('printerShowAll').addEventListener('click', () => {
+        printer.showAllDevices = true;
+        connectPrinter();
       });
       /* Reflect drop-outs (printer switched off, out of range) in the UI */
       printer.onStateChange = updatePrinterBar;
