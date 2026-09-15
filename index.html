@@ -702,9 +702,44 @@
       CHUNK_DELAY_MS: 20,
       DENSITY: 6,           /* 1-8, higher is darker */
       FEED_DOTS: 80,        /* pushes the card clear of the head so it can be torn off */
+      /* Die-cut labels are narrower than the print head. Set this to the label
+         width in millimetres to print at that size and let the model's roll
+         alignment place it; null fills the whole head, which is what the M02's
+         continuous paper wants. */
+      LABEL_WIDTH_MM: null,
+      DPI: 203,
       MAX_RETRIES: 2,
       RETRY_DELAY_MS: 300,
     };
+
+    /* Phomemo models all expose the same GATT characteristic, so the
+       advertised name is the only thing telling them apart — and they differ
+       in protocol, head width and where the roll sits under the head.
+       Order matters: longer names first, so M02 Pro is not caught by M02. */
+    const MODELS = [
+      { match: ['M02 PRO', 'M02PRO'], protocol: 'm02',      widthBytes: 78, alignment: 'center' },
+      { match: ['M02'],               protocol: 'm02',      widthBytes: 48, alignment: 'center' },
+      { match: ['M110', 'M120'],      protocol: 'm110',     widthBytes: 48, alignment: 'center' },
+      { match: ['M220'],              protocol: 'm-series', widthBytes: 72, alignment: 'right'  },
+      { match: ['M221'],              protocol: 'm-series', widthBytes: 72, alignment: 'center' },
+      { match: ['M250'],              protocol: 'm-series', widthBytes: 72, alignment: 'center' },
+      { match: ['M260'],              protocol: 'm-series', widthBytes: 72, alignment: 'center' },
+      { match: ['M200'],              protocol: 'm-series', widthBytes: 76, alignment: 'center' },
+      { match: ['M03'],               protocol: 'm-series', widthBytes: 54, alignment: 'center' },
+      { match: ['T02'],               protocol: 'm-series', widthBytes: 48, alignment: 'center' },
+    ];
+
+    /* An unrecognised Phomemo gets the M02 treatment, which is what every
+       device got before the table existed. */
+    const DEFAULT_MODEL = { protocol: 'm02', widthBytes: 48, alignment: 'center' };
+
+    function detectModel(name) {
+      const upper = (name || '').toUpperCase();
+      for (const model of MODELS) {
+        if (model.match.some(pattern => upper.includes(pattern))) return model;
+      }
+      return DEFAULT_MODEL;
+    }
 
     /* ── The "cat printer" family ──
        MX05/MX06/MX10, GB01/GB02/GB03, GT01, YT01 — the little square units
@@ -793,6 +828,19 @@
       ],
       /* ESC J n — feed n dots */
       FEED: dots => [0x1b, 0x4a, dots & 0xff],
+      /* GS | n — standard ESC/POS density, sent alongside ESC 7 on the
+         wider m-series units because they honour one or the other */
+      DENSITY: level => [0x1d, 0x7c, level],
+    };
+
+    /* The M110/M120 label makers ignore ESC 7 and take their own speed and
+       density commands, then need a footer sequence to release the print. */
+    const M110_CMD = {
+      SPEED:      speed => [0x1b, 0x4e, 0x0d, speed],
+      DENSITY:    density => [0x1b, 0x4e, 0x04, density],
+      MEDIA_TYPE: type => [0x1f, 0x11, type],   /* 10 = die-cut labels with gaps */
+      FOOTER:     [0x1f, 0xf0, 0x05, 0x00, 0x1f, 0xf0, 0x03, 0x00],
+      SPEED_DEFAULT: 5,
     };
 
     class ThermalPrinter {
@@ -802,8 +850,10 @@
         this.notifyChar = null;
         this.connected = false;
         this.onStateChange = null;
-        /* 'phomemo' (ESC/POS) or 'cat' (CRC8 packets), decided at connect time */
+        /* Decided at connect time: 'm02', 'm110', 'm-series' or 'cat' */
         this.protocol = null;
+        this.widthBytes = PHOMEMO.WIDTH_BYTES;
+        this.alignment = 'center';
         /* Set after an empty/cancelled picker so the next try lists everything */
         this.showAllDevices = false;
         /* Some units expose write-with-response only */
@@ -908,14 +958,20 @@
             (lastError ? ' (' + lastError.message + ')' : ''));
         }
 
-        /* Which characteristic answers tells us which protocol to speak. */
+        /* The characteristic picks the family; within the Phomemo family the
+           advertised name picks the model. */
         try {
           this.writeChar = await service.getCharacteristic(PHOMEMO.WRITE_CHAR_UUID);
-          this.protocol = 'phomemo';
+          const model = detectModel(this.device.name);
+          this.protocol = model.protocol;
+          this.widthBytes = model.widthBytes;
+          this.alignment = model.alignment;
         } catch (err) {
           try {
             this.writeChar = await service.getCharacteristic(CAT.WRITE_CHAR_UUID);
             this.protocol = 'cat';
+            this.widthBytes = CAT.WIDTH_BYTES;
+            this.alignment = 'center';
           } catch (err2) {
             throw new Error('Connected, but this device exposes no print channel '
               + '(looked for 0xff02 and 0xae01).');
@@ -980,9 +1036,53 @@
       }
 
       async printRaster(data, widthBytes, lines, onProgress) {
-        return this.protocol === 'cat'
-          ? this.printRasterCat(data, widthBytes, lines, onProgress)
-          : this.printRasterPhomemo(data, widthBytes, lines, onProgress);
+        switch (this.protocol) {
+          case 'cat':      return this.printRasterCat(data, widthBytes, lines, onProgress);
+          case 'm110':     return this.printRasterM110(data, widthBytes, lines, onProgress);
+          case 'm-series': return this.printRasterMSeries(data, widthBytes, lines, onProgress);
+          default:         return this.printRasterPhomemo(data, widthBytes, lines, onProgress);
+        }
+      }
+
+      /* How many bytes of each row carry image, the rest being margin. */
+      contentBytes() {
+        const mm = PHOMEMO.LABEL_WIDTH_MM;
+        if (!mm) return this.widthBytes;
+        const bytes = Math.ceil((mm / 25.4) * PHOMEMO.DPI / 8);
+        return Math.max(1, Math.min(this.widthBytes, bytes));
+      }
+
+      /* M110/M120: no M02 prefix, own speed/density commands, footer to
+         release the print once the gap sensor has found the label edge. */
+      async printRasterM110(data, widthBytes, lines, onProgress) {
+        await this.send(M110_CMD.SPEED(M110_CMD.SPEED_DEFAULT));
+        await this.delay(30);
+        /* Density 1-8 here maps onto the M110's own ~1-15 scale */
+        await this.send(M110_CMD.DENSITY(Math.round(5 + PHOMEMO.DENSITY * 1.25)));
+        await this.delay(30);
+        await this.send(M110_CMD.MEDIA_TYPE(10));
+        await this.delay(30);
+        await this.send(ESC.RASTER(widthBytes, lines));
+        await this.sendChunked(data, onProgress);
+        await this.delay(300);
+        await this.send(M110_CMD.FOOTER);
+        await this.delay(500);
+      }
+
+      /* M200/M220/M221/M250/M260/M03/T02: plain ESC/POS, no prefix and no
+         footer, but they want both density commands and a longer settle. */
+      async printRasterMSeries(data, widthBytes, lines, onProgress) {
+        await this.send(ESC.INIT);
+        await this.delay(100);
+        await this.send(ESC.HEAT(HEAT_TIMES[PHOMEMO.DENSITY - 1]));
+        await this.delay(30);
+        await this.send(ESC.DENSITY(PHOMEMO.DENSITY));
+        await this.delay(50);
+        await this.send(ESC.RASTER(widthBytes, lines));
+        await this.sendChunked(data, onProgress);
+        await this.delay(300);
+        await this.send(ESC.FEED(PHOMEMO.FEED_DOTS));
+        await this.delay(800);
       }
 
       /* One packet per scan line, paced so the printer's buffer keeps up. */
@@ -1066,9 +1166,15 @@
     /* Scale a rendered card to the print head width and pack it into raster
        bytes. ESC/POS puts the leftmost pixel in the high bit; the cat printers
        take each byte the other way round, so bitOrder picks between them. */
-    function canvasToRaster(source, widthBytes, bitOrder) {
-      const width = widthBytes * 8;
+    function canvasToRaster(source, widthBytes, bitOrder, alignment, contentBytes) {
+      /* Content can be narrower than the head when printing to a die-cut
+         label; where it sits in the row is then the roll's alignment. */
+      const rowBytes = contentBytes || widthBytes;
+      const width = rowBytes * 8;
       const lines = Math.max(1, Math.round(source.height * (width / source.width)));
+      let offset = 0;
+      if (alignment === 'center') offset = Math.floor((widthBytes - rowBytes) / 2);
+      else if (alignment === 'right') offset = widthBytes - rowBytes;
 
       const scaled = document.createElement('canvas');
       scaled.width = width;
@@ -1086,14 +1192,14 @@
 
       const data = new Uint8Array(widthBytes * lines);
       for (let y = 0; y < lines; y++) {
-        for (let byteX = 0; byteX < widthBytes; byteX++) {
+        for (let byteX = 0; byteX < rowBytes; byteX++) {
           let byte = 0;
           for (let bit = 0; bit < 8; bit++) {
             if (bits[y * width + byteX * 8 + bit] === 1) {
               byte |= bitOrder === 'lsb' ? (1 << bit) : (1 << (7 - bit));
             }
           }
-          data[y * widthBytes + byteX] = byte;
+          data[y * widthBytes + offset + byteX] = byte;
         }
       }
       return { data: data, widthBytes: widthBytes, lines: lines };
@@ -1149,7 +1255,7 @@
 
       bar.classList.toggle('connected', connected);
       label.textContent = connected
-        ? printer.deviceName + (printer.protocol === 'cat' ? ' · cat' : ' · ESC/POS')
+        ? printer.deviceName + ' · ' + printer.protocol
         : 'Printer not connected';
       action.textContent = connected ? 'Disconnect' : 'Connect';
 
@@ -1207,11 +1313,12 @@
 
         setPrintStatus('Rendering card\u2026');
         const canvas = await renderPrintCanvas(true);
-        const isCat = printer.protocol === 'cat';
         const raster = canvasToRaster(
           canvas,
-          isCat ? CAT.WIDTH_BYTES : PHOMEMO.WIDTH_BYTES,
-          isCat ? 'lsb' : 'msb');
+          printer.widthBytes,
+          printer.protocol === 'cat' ? 'lsb' : 'msb',
+          printer.alignment,
+          printer.contentBytes());
 
         setPrintStatus('Printing\u2026 0%');
         await printer.printRaster(raster.data, raster.widthBytes, raster.lines, percent => {
