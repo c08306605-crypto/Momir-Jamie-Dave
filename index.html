@@ -382,6 +382,51 @@
       height: 18px;
     }
 
+    /* Scryfall draws its symbols as a light grey disc with a dark glyph. The
+       print pass thresholds, so that disc lands on the white side and the pip
+       loses its ring — leaving a bare numeral loose in the sentence. For
+       print the pips are redrawn in pure black and white: white fill, black
+       ring, and a sans glyph, which stays readable at a dozen dots across
+       where the card's serif does not. Both versions are emitted and the
+       mono class picks one. */
+    .mana-pip {
+      display: none;
+      box-sizing: border-box;
+      border: 2px solid #000;
+      border-radius: 50%;
+      background: #fff;
+      color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-weight: 700;
+      text-align: center;
+      vertical-align: middle;
+      overflow: hidden;
+      margin: 0 1px;
+    }
+
+    .print-card.mono .mana-sym { display: none; }
+    .print-card.mono .mana-pip { display: inline-block; }
+    /* No artwork fetched, so the pip is all there is — show it either way */
+    .mana-pip.solo { display: inline-block; }
+
+    .print-mana .mana-pip {
+      width: 19px;
+      height: 19px;
+      line-height: 15px;
+      font-size: 12px;
+    }
+
+    .print-text .mana-pip {
+      width: 21px;
+      height: 21px;
+      line-height: 17px;
+      font-size: 13px;
+    }
+
+    /* Hybrid and phyrexian codes are two characters in the same circle */
+    .print-mana .mana-pip.long { font-size: 8px; }
+    .print-text .mana-pip.long { font-size: 9px; }
+
     .print-art-box {
       width: 100%;
       height: 240px;
@@ -641,15 +686,21 @@
     }
 
     /* Render mana string to HTML using cached data URLs */
+    /* Emits the colour symbol for the screen and a black-and-white pip for
+       the printer; CSS shows whichever the context wants. No whitespace
+       between them, or the hidden one would still occupy a space. */
+    function manaSymbolHTML(match, sym, size) {
+      const code = sym.replace('/', '');
+      const src = manaCache[code] || '';
+      const pip = `<span class="mana-pip${src ? '' : ' solo'}${code.length > 1 ? ' long' : ''}">${code}</span>`;
+      if (!src) return pip;
+      return `<img class="mana-sym" src="${src}" alt="${match}" width="${size}" height="${size}">` + pip;
+    }
+
     function renderManaHTML(manaString, symSize) {
       if (!manaString) return '';
       const size = symSize || 16;
-      return manaString.replace(/\{([^}]+)\}/g, (match, sym) => {
-        const code = sym.replace('/', '');
-        const src = manaCache[code] || '';
-        if (!src) return `<span style="display:inline-block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;background:#cac5c0;border-radius:50%;font-size:${Math.round(size*0.6)}px;color:#000;font-weight:700;vertical-align:middle;">${code}</span>`;
-        return `<img class="mana-sym" src="${src}" alt="${match}" width="${size}" height="${size}">`;
-      });
+      return manaString.replace(/\{([^}]+)\}/g, (match, sym) => manaSymbolHTML(match, sym, size));
     }
 
     /* Render oracle text to HTML with mana symbols */
@@ -660,12 +711,8 @@
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-      const withSymbols = escaped.replace(/\{([^}]+)\}/g, (match, sym) => {
-        const code = sym.replace('/', '');
-        const src = manaCache[code] || '';
-        if (!src) return `<span style="display:inline-block;width:${size}px;height:${size}px;line-height:${size}px;text-align:center;background:#cac5c0;border-radius:50%;font-size:${Math.round(size*0.6)}px;color:#000;font-weight:700;vertical-align:middle;">${code}</span>`;
-        return `<img class="mana-sym" src="${src}" alt="${match}" width="${size}" height="${size}">`;
-      });
+      const withSymbols = escaped.replace(/\{([^}]+)\}/g,
+        (match, sym) => manaSymbolHTML(match, sym, size));
       return withSymbols.replace(/\n/g, '<br>');
     }
 
