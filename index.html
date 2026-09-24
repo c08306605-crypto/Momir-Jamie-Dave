@@ -1127,16 +1127,49 @@
 
     /* ── Canvas → 1-bit raster ── */
 
-    /* Perceptual grey with gamma lift, so midtones survive the 1-bit squash */
-    function toGrayscale(pixels, width, height, gamma) {
-      const gray = new Float32Array(width * height);
-      const gammaInv = 1 / (gamma || 1.3);
-      for (let i = 0; i < gray.length; i++) {
-        const idx = i * 4;
-        const a = pixels[idx + 3];
-        let value = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-        if (a < 255) value = value * (a / 255) + 255 * (1 - a / 255);
-        gray[i] = 255 * Math.pow(value / 255, gammaInv);
+    const RASTER = {
+      /* Render at a whole multiple of the head width so the reduction is a
+         clean box average. An arbitrary resample lands glyph stems on
+         fractional pixels and hands the ditherer a soft edge to chew on. */
+      SUPERSAMPLE: 3,
+      /* Text and rules cross to black here. A little above mid grey, because
+         thin stems are worth more than thin whites at this size. */
+      TEXT_THRESHOLD: 145,
+      /* Midtone lift for the photo only */
+      ART_GAMMA: 1.3,
+    };
+
+    /* Average the supersampled render down to the print head, in perceptual
+       grey. Returns one float per output dot. */
+    function downsampleToGray(source, width, lines) {
+      const sw = source.width;
+      const sh = source.height;
+      const px = source.getContext('2d').getImageData(0, 0, sw, sh).data;
+      const gray = new Float32Array(width * lines);
+      const fx = sw / width;
+      const fy = sh / lines;
+
+      for (let y = 0; y < lines; y++) {
+        const y0 = Math.floor(y * fy);
+        const y1 = Math.min(sh, Math.max(y0 + 1, Math.floor((y + 1) * fy)));
+        for (let x = 0; x < width; x++) {
+          const x0 = Math.floor(x * fx);
+          const x1 = Math.min(sw, Math.max(x0 + 1, Math.floor((x + 1) * fx)));
+          let sum = 0;
+          let n = 0;
+          for (let sy = y0; sy < y1; sy++) {
+            for (let sx = x0; sx < x1; sx++) {
+              const i = (sy * sw + sx) * 4;
+              const a = px[i + 3];
+              /* ITU-R BT.601, transparency flattened onto white */
+              let v = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+              if (a < 255) v = v * (a / 255) + 255 * (1 - a / 255);
+              sum += v;
+              n++;
+            }
+          }
+          gray[y * width + x] = n ? sum / n : 255;
+        }
       }
       return gray;
     }
@@ -1166,7 +1199,7 @@
     /* Scale a rendered card to the print head width and pack it into raster
        bytes. ESC/POS puts the leftmost pixel in the high bit; the cat printers
        take each byte the other way round, so bitOrder picks between them. */
-    function canvasToRaster(source, widthBytes, bitOrder, alignment, contentBytes) {
+    function canvasToRaster(source, widthBytes, bitOrder, alignment, contentBytes, artRegion) {
       /* Content can be narrower than the head when printing to a die-cut
          label; where it sits in the row is then the roll's alignment. */
       const rowBytes = contentBytes || widthBytes;
@@ -1176,19 +1209,42 @@
       if (alignment === 'center') offset = Math.floor((widthBytes - rowBytes) / 2);
       else if (alignment === 'right') offset = widthBytes - rowBytes;
 
-      const scaled = document.createElement('canvas');
-      scaled.width = width;
-      scaled.height = lines;
+      const gray = downsampleToGray(source, width, lines);
 
-      const ctx = scaled.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, width, lines);
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(source, 0, 0, width, lines);
+      /* Everything thresholds. Error diffusion is the right answer for a
+         photograph and the wrong one for type — run over text it scatters the
+         edge of every glyph into loose dots, which is what made the cards
+         print muddier than anything else this printer is given. */
+      const bits = new Uint8Array(width * lines);
+      for (let i = 0; i < gray.length; i++) {
+        bits[i] = gray[i] < RASTER.TEXT_THRESHOLD ? 1 : 0;
+      }
 
-      const pixels = ctx.getImageData(0, 0, width, lines).data;
-      const bits = floydSteinberg(toGrayscale(pixels, width, lines, 1.3), width, lines);
+      /* ...except the art box, which is a photograph and wants dithering. */
+      const art = artRegion && {
+        x0: Math.max(0, Math.round(artRegion.x * width)),
+        y0: Math.max(0, Math.round(artRegion.y * lines)),
+        x1: Math.min(width, Math.round((artRegion.x + artRegion.w) * width)),
+        y1: Math.min(lines, Math.round((artRegion.y + artRegion.h) * lines)),
+      };
+      if (art && art.x1 > art.x0 && art.y1 > art.y0) {
+        const aw = art.x1 - art.x0;
+        const ah = art.y1 - art.y0;
+        const patch = new Float32Array(aw * ah);
+        const gammaInv = 1 / RASTER.ART_GAMMA;
+        for (let y = 0; y < ah; y++) {
+          for (let x = 0; x < aw; x++) {
+            const v = gray[(art.y0 + y) * width + (art.x0 + x)];
+            patch[y * aw + x] = 255 * Math.pow(v / 255, gammaInv);
+          }
+        }
+        const dithered = floydSteinberg(patch, aw, ah);
+        for (let y = 0; y < ah; y++) {
+          for (let x = 0; x < aw; x++) {
+            bits[(art.y0 + y) * width + (art.x0 + x)] = dithered[y * aw + x];
+          }
+        }
+      }
 
       const data = new Uint8Array(widthBytes * lines);
       for (let y = 0; y < lines; y++) {
@@ -1220,19 +1276,40 @@
     }
 
     /* ── Render the off-screen card to a canvas ── */
-    async function renderPrintCanvas(mono) {
+    async function renderPrintCanvas(mono, targetWidth) {
       const printCard = document.getElementById('printCard');
       printCard.classList.add('rendering');
       if (mono) printCard.classList.add('mono');
       try {
         /* Give the art and mana images a moment to lay out before capture */
         await new Promise(r => setTimeout(r, 500));
-        return await html2canvas(printCard, {
+
+        /* Capture at a whole multiple of the dots we will actually print, so
+           the reduction is an exact box average. */
+        const cssWidth = printCard.offsetWidth;
+        const scale = targetWidth
+          ? (targetWidth * RASTER.SUPERSAMPLE) / cssWidth
+          : 2;
+
+        const canvas = await html2canvas(printCard, {
           useCORS: true,
           allowTaint: false,
-          scale: 2,
+          scale: scale,
           backgroundColor: '#ffffff',
         });
+
+        /* Where the photo sits, as fractions of the card, so the raster pass
+           can dither that box and threshold everything around it. */
+        const cardBox = printCard.getBoundingClientRect();
+        const artBox = document.getElementById('printArt').getBoundingClientRect();
+        const artRegion = {
+          x: (artBox.left - cardBox.left) / cardBox.width,
+          y: (artBox.top - cardBox.top) / cardBox.height,
+          w: artBox.width / cardBox.width,
+          h: artBox.height / cardBox.height,
+        };
+
+        return { canvas: canvas, artRegion: artRegion };
       } finally {
         printCard.classList.remove('rendering', 'mono');
       }
@@ -1312,13 +1389,15 @@
         }
 
         setPrintStatus('Rendering card\u2026');
-        const canvas = await renderPrintCanvas(true);
+        const contentBytes = printer.contentBytes();
+        const render = await renderPrintCanvas(true, contentBytes * 8);
         const raster = canvasToRaster(
-          canvas,
+          render.canvas,
           printer.widthBytes,
           printer.protocol === 'cat' ? 'lsb' : 'msb',
           printer.alignment,
-          printer.contentBytes());
+          contentBytes,
+          render.artRegion);
 
         setPrintStatus('Printing\u2026 0%');
         await printer.printRaster(raster.data, raster.widthBytes, raster.lines, percent => {
@@ -1343,7 +1422,7 @@
       btn.textContent = 'Wait...';
 
       try {
-        const canvas = await renderPrintCanvas(false);
+        const canvas = (await renderPrintCanvas(false)).canvas;
 
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         const file = new File([blob], currentCardName + '.png', { type: 'image/png' });
