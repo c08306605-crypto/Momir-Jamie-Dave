@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Momir</title>
+
+  <!-- Added to the home screen, this opens without the browser bar -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f0e17">
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- iOS ignores the manifest and wants its own tags. Web Bluetooth does not
+       work there, but the Share route to the printer app does. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Momir">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="icon" href="favicon-32.png" sizes="32x32">
+  <link rel="icon" href="icon-192.png" sizes="192x192">
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     /* ── Reset & Base ── */
@@ -679,6 +692,15 @@
         <span class="step-title">Generate and print</span>
         <div class="step-body">
           Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-title">Want it to look like an app?</span>
+        <div class="step-body">
+          In Chrome's menu, tap <strong>Add to Home screen</strong>. It then
+          opens in its own window with no browser bar, and still works if you
+          open it somewhere with no signal.
         </div>
       </div>
 
@@ -1582,6 +1604,18 @@
         btn.disabled = false;
         btn.textContent = 'Share';
       }
+    }
+
+    /* ── Service worker ──
+       Registered mainly so Chrome treats this as installable and gives the
+       home screen shortcut its own window. It serves network first, so
+       registering it cannot pin anyone to an old build. */
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {
+          /* Unsupported, or blocked by settings. The app is unaffected. */
+        });
+      });
     }
 
     /* ── Keep the screen awake ──
