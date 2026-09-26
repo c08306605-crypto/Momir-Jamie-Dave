@@ -9,6 +9,10 @@
     /* ── Reset & Base ── */
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+    /* An author display rule outranks the UA stylesheet's [hidden] rule, so
+       anything with display set would ignore the attribute without this. */
+    [hidden] { display: none !important; }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #0f0e17;
@@ -57,6 +61,49 @@
     }
 
     .help-btn:active { opacity: 0.6; }
+
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 50%;
+      border: 2px solid #a7a9be;
+      background: transparent;
+      color: #a7a9be;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .icon-btn:active { opacity: 0.6; }
+
+    /* Lit while active — flipped, or holding the screen awake — so whoever
+       picks the phone up can see why it is behaving as it is */
+    body.flipped .icon-btn.flip-btn,
+    .icon-btn.active {
+      border-color: #ff8906;
+      color: #ff8906;
+    }
+
+    /* ── Flippable view ──
+       Wraps everything the players actually look at. The offscreen print
+       card stays outside it, so turning the screen around never reaches the
+       raster and cards do not print upside down; the modal stays outside
+       too, because a fixed overlay inside a rotated ancestor is positioned
+       against that ancestor rather than the viewport. */
+    #app {
+      width: 100%;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transition: transform 0.3s ease;
+    }
+
+    body.flipped #app { transform: rotate(180deg); }
+    body.flipped .modal { transform: rotate(180deg); }
 
     header p {
       font-size: 0.8rem;
@@ -513,9 +560,28 @@
 </head>
 <body>
 
+  <div id="app">
+
   <header>
     <div class="title-row">
+      <button class="icon-btn flip-btn" id="flipBtn" aria-label="Turn the screen around for the player opposite">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3.5 L4.5 7 L8 10.5"/>
+          <path d="M4.5 7 H14.5 a4.5 4.5 0 0 1 4.5 4.5"/>
+          <path d="M16 20.5 L19.5 17 L16 13.5"/>
+          <path d="M19.5 17 H9.5 a4.5 4.5 0 0 1 -4.5 -4.5"/>
+        </svg>
+      </button>
       <h1>MOMIR</h1>
+      <button class="icon-btn active" id="wakeBtn" hidden
+              aria-label="Keep the screen awake">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>
+        </svg>
+      </button>
       <button class="help-btn" id="helpBtn">?</button>
     </div>
     <p>Tap a mana value to summon a creature</p>
@@ -528,48 +594,6 @@
     <span class="printer-label" id="printerLabel">Printer not connected</span>
     <button class="printer-action secondary" id="printerShowAll" hidden>Show all</button>
     <button class="printer-action" id="printerAction">Connect</button>
-  </div>
-
-  <!-- ── Help Modal ── -->
-  <div class="modal-overlay" id="helpModal">
-    <div class="modal">
-      <h2>How to Use</h2>
-
-      <div class="step">
-        <span class="step-num">1</span>
-        <span class="step-title">Buy a Bluetooth thermal printer</span>
-        <div class="step-body">
-          We used the Phomemo M02 — it's cheap and does the job. Make sure you buy <strong>sticky thermal paper</strong> that is <strong>black on white</strong>. The paper that comes with the M02 is transparent and not black which has mixed results.
-        </div>
-      </div>
-
-      <div class="step">
-        <span class="step-num">2</span>
-        <span class="step-title">Connect the printer</span>
-        <div class="step-body">
-          Switch the printer on, then tap <strong>Connect</strong> at the top of this page and pick it from the Bluetooth list. This talks to the printer directly — no Phomemo app needed. It only works in <strong>Chrome on Android</strong> (or desktop Chrome/Edge); other browsers don't support Web Bluetooth.
-        </div>
-      </div>
-
-      <div class="step">
-        <span class="step-num">3</span>
-        <span class="step-title">Generate and print</span>
-        <div class="step-body">
-          Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="step-body" style="text-align:center; color:#ff8906; font-weight:700; font-size:0.9rem;">
-          Janky and simple. Have fun!
-        </div>
-      </div>
-
-      <button class="close-btn" id="helpClose">Got it</button>
-      <div class="footer-note">
-        Designed for mobile use. Only tested on Android using Chrome.
-      </div>
-    </div>
   </div>
 
   <!-- ── Screen: CMC Grid ── -->
@@ -609,6 +633,8 @@
     </div>
   </div>
 
+  </div><!-- /#app -->
+
   <!-- Offscreen card for rendering to image -->
   <div class="print-card" id="printCard">
     <div class="print-title-bar">
@@ -625,6 +651,67 @@
       <div class="print-text" id="printText"></div>
     </div>
     <div class="print-pt-box" id="printPTBox"></div>
+  </div>
+
+  <!-- ── Help Modal ── -->
+  <div class="modal-overlay" id="helpModal">
+    <div class="modal">
+      <h2>How to Use</h2>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Buy a Bluetooth thermal printer</span>
+        <div class="step-body">
+          We used the Phomemo M02 — it's cheap and does the job. Make sure you buy <strong>sticky thermal paper</strong> that is <strong>black on white</strong>. The paper that comes with the M02 is transparent and not black which has mixed results.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Connect the printer</span>
+        <div class="step-body">
+          Switch the printer on, then tap <strong>Connect</strong> at the top of this page and pick it from the Bluetooth list. This talks to the printer directly — no Phomemo app needed. It only works in <strong>Chrome on Android</strong> (or desktop Chrome/Edge); other browsers don't support Web Bluetooth.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Generate and print</span>
+        <div class="step-body">
+          Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-title">Screen dimming mid-game?</span>
+        <div class="step-body">
+          It shouldn't — the sun button beside the <strong>?</strong> holds the
+          screen awake while the app is open, and starts on. Tap it to let the
+          phone sleep normally. The phone still locks as usual once you switch
+          away from the app.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-title">Playing opposite someone?</span>
+        <div class="step-body">
+          The arrows beside the title turn the screen around, so you can leave
+          the phone on the table between you instead of passing it back and
+          forth. Tap them again to turn it back. Printing is unaffected.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body" style="text-align:center; color:#ff8906; font-weight:700; font-size:0.9rem;">
+          Janky and simple. Have fun!
+        </div>
+      </div>
+
+      <button class="close-btn" id="helpClose">Got it</button>
+      <div class="footer-note">
+        Designed for mobile use. Only tested on Android using Chrome.
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1496,6 +1583,70 @@
         btn.textContent = 'Share';
       }
     }
+
+    /* ── Keep the screen awake ──
+       A game sits on the table between turns, and the phone dimming and
+       locking mid-hand is worse than the battery it costs. The lock is held
+       only while the page is visible: the system drops it whenever the page
+       is hidden, so it has to be taken again on the way back. */
+    let wakeLock = null;
+    let keepAwake = true;
+
+    function wakeLockSupported() {
+      return 'wakeLock' in navigator;
+    }
+
+    async function acquireWakeLock() {
+      if (!keepAwake || !wakeLockSupported() || wakeLock) return;
+      if (document.visibilityState !== 'visible') return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        /* Fires when the system takes it back, not only when we release */
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (err) {
+        /* Refused for battery saver, policy or visibility. Not worth
+           interrupting a game over — the screen just behaves as it always did. */
+        wakeLock = null;
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (!wakeLock) return;
+      try {
+        await wakeLock.release();
+      } catch (err) {
+        /* Already gone */
+      }
+      wakeLock = null;
+    }
+
+    if (wakeLockSupported()) {
+      const wakeBtn = document.getElementById('wakeBtn');
+      wakeBtn.hidden = false;
+
+      wakeBtn.addEventListener('click', () => {
+        keepAwake = !keepAwake;
+        /* The button shows what was asked for, not whether the lock happens
+           to be held this instant, or it would blink off on every tab away */
+        wakeBtn.classList.toggle('active', keepAwake);
+        if (keepAwake) acquireWakeLock();
+        else releaseWakeLock();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') acquireWakeLock();
+      });
+
+      /* Some builds only grant this off a user gesture, so try on load and
+         again on the first taps. Held locks make the retry a no-op. */
+      acquireWakeLock();
+      document.addEventListener('pointerdown', acquireWakeLock);
+    }
+
+    /* ── Turn the screen around for the player opposite ── */
+    document.getElementById('flipBtn').addEventListener('click', () => {
+      document.body.classList.toggle('flipped');
+    });
 
     /* ── Help modal ── */
     document.getElementById('helpBtn').addEventListener('click', () => {
