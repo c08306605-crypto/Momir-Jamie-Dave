@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Momir</title>
 
   <!-- Added to the home screen, this opens without the browser bar -->
@@ -21,6 +21,30 @@
   <style>
     /* ── Reset & Base ── */
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    /* The interface was pinned to a phone's width, so on a folding phone
+       opened out it sat in a small column in the middle of a large screen.
+       Everything on screen is sized from these two, in rem or from the app
+       width, so both step up together.
+
+       The print card is deliberately not: it is laid out in px at a fixed
+       450x630 and rasterised from there, so what comes out of the printer
+       cannot move with the size of the phone reading it. */
+    :root {
+      --app-width: 420px;
+    }
+
+    /* Both dimensions are tested, so a phone lying in landscape does not get
+       treated as a tablet. */
+    @media (min-width: 600px) and (min-height: 600px) {
+      :root { --app-width: 540px; }
+      html { font-size: 19px; }
+    }
+
+    @media (min-width: 760px) and (min-height: 760px) {
+      :root { --app-width: 660px; }
+      html { font-size: 22px; }
+    }
 
     /* An author display rule outranks the UA stylesheet's [hidden] rule, so
        anything with display set would ignore the attribute without this. */
@@ -58,8 +82,8 @@
     }
 
     .help-btn {
-      width: 28px;
-      height: 28px;
+      width: 1.75rem;
+      height: 1.75rem;
       border-radius: 50%;
       border: 2px solid #a7a9be;
       background: transparent;
@@ -76,8 +100,8 @@
     .help-btn:active { opacity: 0.6; }
 
     .icon-btn {
-      width: 28px;
-      height: 28px;
+      width: 1.75rem;
+      height: 1.75rem;
       padding: 0;
       border-radius: 50%;
       border: 2px solid #a7a9be;
@@ -91,6 +115,11 @@
     }
 
     .icon-btn:active { opacity: 0.6; }
+
+    .icon-btn svg {
+      width: 55%;
+      height: 55%;
+    }
 
     /* Lit while active — flipped, or holding the screen awake — so whoever
        picks the phone up can see why it is behaving as it is */
@@ -145,7 +174,7 @@
       border: 2px solid #252541;
       border-radius: 16px;
       padding: 1.5rem;
-      max-width: 380px;
+      max-width: calc(var(--app-width) * 0.9);
       width: 100%;
       max-height: 85vh;
       overflow-y: auto;
@@ -166,8 +195,8 @@
       display: inline-block;
       background: #ff8906;
       color: #0f0e17;
-      width: 24px;
-      height: 24px;
+      width: 1.5rem;
+      height: 1.5rem;
       border-radius: 50%;
       text-align: center;
       line-height: 24px;
@@ -213,7 +242,7 @@
     }
 
     /* ── Screens ── */
-    .screen { display: none; width: 100%; max-width: 420px; padding: 0.75rem; }
+    .screen { display: none; width: 100%; max-width: var(--app-width); padding: 0.75rem; }
     .screen.active { display: flex; flex-direction: column; align-items: center; }
 
     /* ── CMC Grid ── */
@@ -251,8 +280,8 @@
 
     /* ── Loading ── */
     .spinner {
-      width: 48px;
-      height: 48px;
+      width: 3rem;
+      height: 3rem;
       border: 4px solid #252541;
       border-top-color: #ff8906;
       border-radius: 50%;
@@ -270,7 +299,7 @@
     /* ── Card Display (on-screen) ── */
     .card-image-wrap {
       width: 100%;
-      max-width: 300px;
+      max-width: calc(var(--app-width) * 0.72);
       margin-bottom: 0.75rem;
     }
 
@@ -316,7 +345,7 @@
       align-items: center;
       gap: 0.5rem;
       width: calc(100% - 1.5rem);
-      max-width: 405px;
+      max-width: calc(var(--app-width) - 15px);
       margin: 0 auto;
       padding: 0.5rem 0.75rem;
       background: #1a1a2e;
@@ -329,8 +358,8 @@
     .printer-bar.visible { display: flex; }
 
     .printer-dot {
-      width: 9px;
-      height: 9px;
+      width: 0.56rem;
+      height: 0.56rem;
       border-radius: 50%;
       background: #5a5a70;
       flex-shrink: 0;
