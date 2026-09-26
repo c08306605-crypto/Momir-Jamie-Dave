@@ -58,6 +58,48 @@
 
     .help-btn:active { opacity: 0.6; }
 
+    .flip-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 50%;
+      border: 2px solid #a7a9be;
+      background: transparent;
+      color: #a7a9be;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .flip-btn:active { opacity: 0.6; }
+
+    /* Lit while flipped, so whoever picks the phone up can see why the
+       screen is the way it is */
+    body.flipped .flip-btn {
+      border-color: #ff8906;
+      color: #ff8906;
+    }
+
+    /* ── Flippable view ──
+       Wraps everything the players actually look at. The offscreen print
+       card stays outside it, so turning the screen around never reaches the
+       raster and cards do not print upside down; the modal stays outside
+       too, because a fixed overlay inside a rotated ancestor is positioned
+       against that ancestor rather than the viewport. */
+    #app {
+      width: 100%;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transition: transform 0.3s ease;
+    }
+
+    body.flipped #app { transform: rotate(180deg); }
+    body.flipped .modal { transform: rotate(180deg); }
+
     header p {
       font-size: 0.8rem;
       color: #a7a9be;
@@ -513,8 +555,19 @@
 </head>
 <body>
 
+  <div id="app">
+
   <header>
     <div class="title-row">
+      <button class="flip-btn" id="flipBtn" aria-label="Turn the screen around for the player opposite">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3.5 L4.5 7 L8 10.5"/>
+          <path d="M4.5 7 H14.5 a4.5 4.5 0 0 1 4.5 4.5"/>
+          <path d="M16 20.5 L19.5 17 L16 13.5"/>
+          <path d="M19.5 17 H9.5 a4.5 4.5 0 0 1 -4.5 -4.5"/>
+        </svg>
+      </button>
       <h1>MOMIR</h1>
       <button class="help-btn" id="helpBtn">?</button>
     </div>
@@ -528,48 +581,6 @@
     <span class="printer-label" id="printerLabel">Printer not connected</span>
     <button class="printer-action secondary" id="printerShowAll" hidden>Show all</button>
     <button class="printer-action" id="printerAction">Connect</button>
-  </div>
-
-  <!-- ── Help Modal ── -->
-  <div class="modal-overlay" id="helpModal">
-    <div class="modal">
-      <h2>How to Use</h2>
-
-      <div class="step">
-        <span class="step-num">1</span>
-        <span class="step-title">Buy a Bluetooth thermal printer</span>
-        <div class="step-body">
-          We used the Phomemo M02 — it's cheap and does the job. Make sure you buy <strong>sticky thermal paper</strong> that is <strong>black on white</strong>. The paper that comes with the M02 is transparent and not black which has mixed results.
-        </div>
-      </div>
-
-      <div class="step">
-        <span class="step-num">2</span>
-        <span class="step-title">Connect the printer</span>
-        <div class="step-body">
-          Switch the printer on, then tap <strong>Connect</strong> at the top of this page and pick it from the Bluetooth list. This talks to the printer directly — no Phomemo app needed. It only works in <strong>Chrome on Android</strong> (or desktop Chrome/Edge); other browsers don't support Web Bluetooth.
-        </div>
-      </div>
-
-      <div class="step">
-        <span class="step-num">3</span>
-        <span class="step-title">Generate and print</span>
-        <div class="step-body">
-          Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="step-body" style="text-align:center; color:#ff8906; font-weight:700; font-size:0.9rem;">
-          Janky and simple. Have fun!
-        </div>
-      </div>
-
-      <button class="close-btn" id="helpClose">Got it</button>
-      <div class="footer-note">
-        Designed for mobile use. Only tested on Android using Chrome.
-      </div>
-    </div>
   </div>
 
   <!-- ── Screen: CMC Grid ── -->
@@ -609,6 +620,8 @@
     </div>
   </div>
 
+  </div><!-- /#app -->
+
   <!-- Offscreen card for rendering to image -->
   <div class="print-card" id="printCard">
     <div class="print-title-bar">
@@ -625,6 +638,57 @@
       <div class="print-text" id="printText"></div>
     </div>
     <div class="print-pt-box" id="printPTBox"></div>
+  </div>
+
+  <!-- ── Help Modal ── -->
+  <div class="modal-overlay" id="helpModal">
+    <div class="modal">
+      <h2>How to Use</h2>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Buy a Bluetooth thermal printer</span>
+        <div class="step-body">
+          We used the Phomemo M02 — it's cheap and does the job. Make sure you buy <strong>sticky thermal paper</strong> that is <strong>black on white</strong>. The paper that comes with the M02 is transparent and not black which has mixed results.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Connect the printer</span>
+        <div class="step-body">
+          Switch the printer on, then tap <strong>Connect</strong> at the top of this page and pick it from the Bluetooth list. This talks to the printer directly — no Phomemo app needed. It only works in <strong>Chrome on Android</strong> (or desktop Chrome/Edge); other browsers don't support Web Bluetooth.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Generate and print</span>
+        <div class="step-body">
+          Tap a mana value to generate a random creature, then hit <strong>Print</strong>. The card goes straight to the printer in one tap. If Bluetooth isn't available, <strong>Share</strong> still renders the card as an image for the Phomemo app.
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-title">Playing opposite someone?</span>
+        <div class="step-body">
+          The arrows beside the title turn the screen around, so you can leave
+          the phone on the table between you instead of passing it back and
+          forth. Tap them again to turn it back. Printing is unaffected.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body" style="text-align:center; color:#ff8906; font-weight:700; font-size:0.9rem;">
+          Janky and simple. Have fun!
+        </div>
+      </div>
+
+      <button class="close-btn" id="helpClose">Got it</button>
+      <div class="footer-note">
+        Designed for mobile use. Only tested on Android using Chrome.
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1496,6 +1560,11 @@
         btn.textContent = 'Share';
       }
     }
+
+    /* ── Turn the screen around for the player opposite ── */
+    document.getElementById('flipBtn').addEventListener('click', () => {
+      document.body.classList.toggle('flipped');
+    });
 
     /* ── Help modal ── */
     document.getElementById('helpBtn').addEventListener('click', () => {
